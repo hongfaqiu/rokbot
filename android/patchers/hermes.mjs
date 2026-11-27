@@ -67,12 +67,59 @@ export function applyBytepatch(sourceBuffer, recipe) {
   return result;
 }
 
-export function synthesizePinnedResources(origBundleBuffer, recipesDir = RECIPES_DIR) {
-  const unpairedPath = path.join(recipesDir, 'unpaired.hbc.gbp.gz');
-  const templateHbcPath = path.join(recipesDir, 'gateway-template.hbc.gbp.gz');
-  const templateJsonPath = path.join(recipesDir, 'gateway-template.json.gbp.gz');
+function resolveRecipeSet(recipesDir = RECIPES_DIR, { actualSha256 = null, versionCode = null } = {}) {
+  const candidates = [];
+  const seenSuffix = new Set();
+  const addCandidate = (suffix) => {
+    if (seenSuffix.has(suffix)) return;
+    seenSuffix.add(suffix);
+    const metaPath = path.join(recipesDir, `gateway-template${suffix}.json`);
+    const unpairedPath = path.join(recipesDir, `unpaired${suffix}.hbc.gbp.gz`);
+    const templateHbcPath = path.join(recipesDir, `gateway-template${suffix}.hbc.gbp.gz`);
+    const templateJsonPath = path.join(recipesDir, `gateway-template${suffix}.json.gbp.gz`);
+    if (fs.existsSync(metaPath)) {
+      let meta = null;
+      try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch {}
+      candidates.push({ suffix, metaPath, meta, unpairedPath, templateHbcPath, templateJsonPath });
+    }
+  };
+
+  if (versionCode != null) addCandidate(`-${versionCode}`);
+  try {
+    const manifestPath = path.join(recipesDir, 'manifest.json');
+    if (fs.existsSync(manifestPath)) {
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (m?.build) addCandidate(`-${m.build}`);
+    }
+  } catch {}
+  try {
+    for (const name of fs.readdirSync(recipesDir).sort()) {
+      const m = /^gateway-template(-\d+)\.json$/.exec(name);
+      if (m) addCandidate(m[1]);
+    }
+  } catch {}
+  addCandidate('');
+
+  if (actualSha256) {
+    const exact = candidates.find(c => c.meta?.originalSha256 === actualSha256);
+    if (exact) return exact;
+  }
+  return candidates[0] || {
+    suffix: '',
+    metaPath: path.join(recipesDir, 'gateway-template.json'),
+    meta: null,
+    unpairedPath: path.join(recipesDir, 'unpaired.hbc.gbp.gz'),
+    templateHbcPath: path.join(recipesDir, 'gateway-template.hbc.gbp.gz'),
+    templateJsonPath: path.join(recipesDir, 'gateway-template.json.gbp.gz'),
+  };
+}
+
+export function synthesizePinnedResources(origBundleBuffer, recipesDir = RECIPES_DIR, { versionCode = null } = {}) {
+  const actualSha256 = sha256Hex(origBundleBuffer);
+  const set = resolveRecipeSet(recipesDir, { actualSha256, versionCode });
+  const { unpairedPath, templateHbcPath, templateJsonPath } = set;
   if (!fs.existsSync(unpairedPath) || !fs.existsSync(templateHbcPath) || !fs.existsSync(templateJsonPath)) {
-    throw new Error(`Missing .gbp.gz recipe files in ${recipesDir}`);
+    throw new Error(`Missing .gbp.gz recipe files in ${recipesDir} (suffix=${set.suffix || 'default'})`);
   }
   const unpairedHbc = applyBytepatch(origBundleBuffer, loadBytepatchRecipe(unpairedPath));
   const gatewayTemplateHbc = applyBytepatch(origBundleBuffer, loadBytepatchRecipe(templateHbcPath));
@@ -85,12 +132,17 @@ export function synthesizePinnedResources(origBundleBuffer, recipesDir = RECIPES
   };
 }
 
-export function loadGatewayTemplateMetadata() {
-  const metaPath = path.join(RECIPES_DIR, 'gateway-template.json');
-  if (!fs.existsSync(metaPath)) {
-    throw new Error(`gateway-template.json not found at ${metaPath}`);
+export function loadGatewayTemplateMetadata(pathOrOptions = null) {
+  if (typeof pathOrOptions === 'string' && fs.existsSync(pathOrOptions)) {
+    return JSON.parse(fs.readFileSync(pathOrOptions, 'utf8'));
   }
-  return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  const recipesDir = (pathOrOptions && typeof pathOrOptions === 'object' && pathOrOptions.recipesDir) || RECIPES_DIR;
+  const versionCode = (pathOrOptions && typeof pathOrOptions === 'object' && pathOrOptions.versionCode) || null;
+  const set = resolveRecipeSet(recipesDir, { versionCode });
+  if (!set.meta) {
+    throw new Error(`gateway-template.json not found at ${set.metaPath}`);
+  }
+  return set.meta;
 }
 
 /**
@@ -209,13 +261,14 @@ export function synthesizeHermesBytecode(templateBundle, meta, url, token = '') 
  * When patching an unpinned/dummy or mismatched APK build without force=true, leaves the HBC untouched
  * so the native companion (`assets/rokbot-preconfig.json` + `NetworkInterceptor`) handles Host routing safely.
  */
-export function patchHermesBundleSafely(bundleBuffer, { host, pairingCode, token, meta, recipesDir = RECIPES_DIR, force = false, rebrandSettings = true } = {}) {
-  const metadata = meta || loadGatewayTemplateMetadata();
+export function patchHermesBundleSafely(bundleBuffer, { host, pairingCode, token, meta, recipesDir = RECIPES_DIR, versionCode = null, force = false, rebrandSettings = true } = {}) {
   const actualSha256 = sha256Hex(bundleBuffer);
+  const resolved = meta ? { meta } : resolveRecipeSet(recipesDir, { actualSha256, versionCode });
+  const metadata = resolved.meta || loadGatewayTemplateMetadata({ recipesDir, versionCode });
   const pinMatched = metadata.originalSha256 ? actualSha256 === metadata.originalSha256 : null;
 
   if (metadata.originalSha256 && actualSha256 === metadata.originalSha256) {
-    const recipeOutputs = synthesizePinnedResources(bundleBuffer, recipesDir);
+    const recipeOutputs = synthesizePinnedResources(bundleBuffer, recipesDir, { versionCode });
     // RokBot settings-sheet rebrand (in-place, size-preserving; see hermes-settings.mjs).
     const pinned = rebrandSettings
       ? rebrandPinnedHermesResources(recipeOutputs)

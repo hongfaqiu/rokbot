@@ -5,18 +5,18 @@
     "ai.x.grok.bot",
     "co.anysphere.sand"
   ],
-  "version": "1.26.0",
-  "build": "3212",
+  "version": "1.27.0",
+  "build": "3283",
   "architecture": "arm64-v8a",
   "tailcatLibs": [
     "lib/arm64-v8a/libgroktailcat.so",
     "lib/arm64-v8a/libgroktailcatjni.so"
   ],
   "hbcVersion": 98,
-  "hbcSha256": "e72cff448260d3de44add52391ec6ea6ac81bc5f710806a54cf5af9261d1817b",
-  "companionDexSha256": "184fec0137da55165351905d7ececbf5ea1e292200e7474ddd7a361dfd1a68f5",
-  "baseApkSha256": "89c23b58eb3c6d1e9167e00a68ee3c4d1945c463d2d780ac3e4996b0f5778854",
-  "bundleSize": 38303104,
+  "hbcSha256": "64e24ecfe7957772290fa9780901639dcbfafa7b7c71951c7dcb7f1dc60d5fb6",
+  "companionDexSha256": "44ab2cdbd8388faccd073bff41bab7b6a5d987aef6091b6ccd3d50e2a1d527df",
+  "baseApkSha256": "c08f1bc3feb434ce58c683fabe1d6f5190c367f6192700700cb6c50c2724fb98",
+  "bundleSize": 41995776,
   "compatibility": {
     "minSdk": 28,
     "targetSdk": 36,
@@ -55,24 +55,24 @@
   "resources": [
     {
       "target": "assets/unpaired.hbc",
-      "patch": "unpaired.hbc.gbp.gz",
-      "sourceSha256": "e72cff448260d3de44add52391ec6ea6ac81bc5f710806a54cf5af9261d1817b",
-      "targetSha256": "00a97e4dceb6fa29e5be5ab3553d8add479466ab78ea1e7d13cb2bd3a3adaea9",
-      "targetBytes": 38303496
+      "patch": "unpaired-3283.hbc.gbp.gz",
+      "sourceSha256": "64e24ecfe7957772290fa9780901639dcbfafa7b7c71951c7dcb7f1dc60d5fb6",
+      "targetSha256": "b1805baeba1690d254cf8255b0af6706d04aaf50d7dc64057ed906f1e61920bb",
+      "targetBytes": 41996168
     },
     {
       "target": "assets/gateway-template.hbc",
-      "patch": "gateway-template.hbc.gbp.gz",
-      "sourceSha256": "e72cff448260d3de44add52391ec6ea6ac81bc5f710806a54cf5af9261d1817b",
-      "targetSha256": "ee6e005b9792154b317dcbefef52911f6942017f3ca3a9bbd280b126be3752da",
-      "targetBytes": 38328932
+      "patch": "gateway-template-3283.hbc.gbp.gz",
+      "sourceSha256": "64e24ecfe7957772290fa9780901639dcbfafa7b7c71951c7dcb7f1dc60d5fb6",
+      "targetSha256": "f0b3c12ad51ca5b13b26e67d2ba5ab6b28c093fd3beac8bc4375f3f5140cd11d",
+      "targetBytes": 42021568
     },
     {
       "target": "assets/gateway-template.json",
-      "patch": "gateway-template.json.gbp.gz",
-      "sourceSha256": "e72cff448260d3de44add52391ec6ea6ac81bc5f710806a54cf5af9261d1817b",
-      "targetSha256": "0a88f5fb40141b81aef308d0c801b080e9371f551e58ab557a548e4329eade96",
-      "targetBytes": 2030
+      "patch": "gateway-template-3283.json.gbp.gz",
+      "sourceSha256": "64e24ecfe7957772290fa9780901639dcbfafa7b7c71951c7dcb7f1dc60d5fb6",
+      "targetSha256": "08c2cdc7d3528322fb6d674d323b6dda827bae4a3cc2d4433c40d7617b283993",
+      "targetBytes": 2185
     }
   ]
 }

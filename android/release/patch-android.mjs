@@ -559,6 +559,7 @@ export async function runPatchPipeline(options) {
         host: options.host,
         pairingCode: options.pairingCode,
         recipesDir: RECIPES_DIR,
+        versionCode: manifestInfo.versionCode,
         force: Boolean(options.forceHbc),
       });
       bundlePatched = res.patched;

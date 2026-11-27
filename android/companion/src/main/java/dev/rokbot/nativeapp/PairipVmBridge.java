@@ -130,10 +130,12 @@ public final class PairipVmBridge {
     public static Object dispatch(String vmId, Object[] args) {
         try {
             switch (vmId) {
+                case "NM8u5cTWJ7VAGf6I":
                 case "WuyOlMkwWcZBkxUp":
                 case "VQUbVTKQTL1qtJlp":
                     handleMainApplicationOnCreate(args);
                     return null;
+                case "r2m6FIoXD7gd9Oo9":
                 case "6IrZUIqGyM6AvaEM":
                 case "wbaeflvl3wYdHcnN":
                     handleMainActivityOnCreate(args);
@@ -143,14 +145,21 @@ public final class PairipVmBridge {
                 case "AiKcMrBaBFTk4NAj":
                     handleExpoNotificationsOnReceive(args);
                     return null;
+                case "9YlQPEbHXo2oXsY4":
                 case "6yVugsjKzNysknoL":
                 case "GBAvda9b6VdXkwk8":
                     return handleFileProviderQuery(args, true);
+                case "LVUAfqFb4XJkgyYU":
                 case "d1VB4OmIOrtlRvlX":
                 case "YwstgKX7qsz4pQAu":
                     return handleFileProviderQuery(args, false);
                 case "gPfXSxLeDsHS85uB":
                     return Integer.valueOf(Service.START_NOT_STICKY);
+                case "EfkTPvAks16mUb1W":
+                case "JBxJiEKNHR9OvV19":
+                case "jp58srVQp1dH3rak":
+                case "rcxCHTtNYeN9sKBU":
+                case "YfumUVHcBajnZYzj":
                 case "ZFLJ0hjr1EuS34Jm":
                 case "aGVaQw3uVgSshh8H":
                 case "heZqubzfRJao8bhb":
@@ -171,6 +180,15 @@ public final class PairipVmBridge {
                     return portedOnCreate(vmId, args, PairipActivityPorts.PLAY_CORE_DIALOG);
                 case "GU0LCjESbvj9UT2P":
                     return portedOnCreate(vmId, args, PairipActivityPorts.BRAZE_WEBVIEW);
+                case "DLgXqJqoFAHnL4ib": // 1.27.0 ProxyBillingActivity
+                case "de4UrpERZ10h2Ka5": // 1.27.0 ProxyBillingActivityV2
+                case "C0hBYmOFiowXgVlC": // 1.27.0 SignInHubActivity
+                    if (args.length > 0 && args[0] instanceof Activity) {
+                        handleGenericActivityOnCreate(args);
+                        try { ((Activity) args[0]).setResult(Activity.RESULT_CANCELED); } catch (Throwable ignored) {}
+                        try { ((Activity) args[0]).finish(); } catch (Throwable ignored) {}
+                    }
+                    return null;
                 case "sAkN0RxZouDqCE6s": // ProxyBillingActivity
                 case "SoGry6x665HebzTB": // ProxyBillingActivityV2
                 case "uX2I4kjoqIXRjoXt": // SignInHubActivity
@@ -179,7 +197,12 @@ public final class PairipVmBridge {
                                 (Activity) args[0], PairipActivityPorts.bundleArg(args), "onCreate$001");
                     }
                     return null;
-                // Legacy 1.16.0 ids (not present in the 1.26.0 dex).
+                // 1.27.0 (3283) Activity.onCreate fallback + legacy 1.16.0 ids.
+                case "PskTzHalyTgab4dc":
+                case "z3CUNGnFh7ZjaZx1":
+                case "1pqcaG91HvqkgKaE":
+                case "Ewib4OieCWobG2Ki":
+                case "tQaEh9tAOb2Nt7v5":
                 case "Kxck2Zh2u5FhF1tJ":
                 case "5IFjnPl4DG0uh4Kg":
                 case "t5fsBS6auL9smZvu":
@@ -190,6 +213,13 @@ public final class PairipVmBridge {
                 case "Pkq2lQp4VRLsamk4":
                 case "yPnWNF0r6C07GQhs":
                     handleGenericActivityOnCreate(args);
+                    return null;
+                case "r2XMZAdq0c4jH6il":
+                case "AuZRHwPkyUwEx8KP":
+                    callZeroArgSynthetic(args, "onDestroy$", Activity.class);
+                    return null;
+                case "RT7lhdGIBjgOhHmo":
+                    callZeroArgSynthetic(args, "onPause$", Activity.class);
                     return null;
                 case "I5hfm577V3jsppLY": { // FullscreenPlayerActivity.onDestroy
                     Activity act = PairipActivityPorts.activityArg(args, PairipActivityPorts.FULLSCREEN_PLAYER);
@@ -245,20 +275,20 @@ public final class PairipVmBridge {
         if (args.length < 1 || !(args[0] instanceof Application)) return;
         Application app = (Application) args[0];
 
-        // 1. Call super.onCreate() via MainApplication.onCreate$001(Application)
+        // 1. Call super.onCreate() via MainApplication.onCreate$* (onCreate$001 in 1.26.0, onCreate$s4mgFiew in 1.27.0)
         try {
-            Method m = app.getClass().getMethod("onCreate$001", Application.class);
-            m.invoke(null, app);
-        } catch (Throwable ignored) {
-            try {
-                Class<?> ma = Class.forName("ai.x.grok.bot.MainApplication");
-                ma.getMethod("onCreate$001", Application.class).invoke(null, app);
-            } catch (Throwable t) {
-                Log.w(TAG, "onCreate$001 failed", t);
+            Method superCreate = findStaticSynthetic(app.getClass(), "onCreate$", Application.class);
+            if (superCreate == null) {
+                superCreate = findStaticSynthetic(Class.forName("ai.x.grok.bot.MainApplication"), "onCreate$", Application.class);
             }
+            if (superCreate != null) {
+                superCreate.invoke(null, app);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "MainApplication.onCreate$ synthetic failed", t);
         }
 
-        // 2. Register official XVF, XVF Mono, and system fonts via ReactFontManager (p9.a in 1.26.0, X7.a in 1.16.0)
+        // 2. Register official XVF, XVF Mono, and system fonts via ReactFontManager (p9.a in 1.26.0/1.27.0, X7.a in 1.16.0)
         try {
             Class<?> fontMgrCls;
             Class<?> companionCls;
@@ -282,18 +312,15 @@ public final class PairipVmBridge {
             if (xvfMonoId != 0) addFont.invoke(fontMgr, app, "XVF Mono", xvfMonoId);
 
             try {
-                Class<?> bodyFontHelperCls;
-                try {
-                    bodyFontHelperCls = Class.forName("Ii.R0");
-                } catch (ClassNotFoundException ignored) {
-                    bodyFontHelperCls = Class.forName("jg.g");
-                }
-                Object bodyFontHelper = bodyFontHelperCls.getField("a").get(null);
-                String bodyFont = (String) bodyFontHelperCls.getMethod("a", Resources.class)
-                        .invoke(bodyFontHelper, app.getResources());
-                if (bodyFont != null && !bodyFont.isEmpty()) {
-                    Method setTypeface = fontMgrCls.getMethod("e", String.class, Typeface.class);
-                    setTypeface.invoke(fontMgr, bodyFont, Typeface.create(bodyFont, Typeface.NORMAL));
+                Class<?> bodyFontHelperCls = firstClass("Mi.T0", "Ii.R0", "jg.g");
+                if (bodyFontHelperCls != null) {
+                    Object bodyFontHelper = bodyFontHelperCls.getField("a").get(null);
+                    String bodyFont = (String) bodyFontHelperCls.getMethod("a", Resources.class)
+                            .invoke(bodyFontHelper, app.getResources());
+                    if (bodyFont != null && !bodyFont.isEmpty()) {
+                        Method setTypeface = fontMgrCls.getMethod("e", String.class, Typeface.class);
+                        setTypeface.invoke(fontMgr, bodyFont, Typeface.create(bodyFont, Typeface.NORMAL));
+                    }
                 }
             } catch (Throwable ignored) {}
         } catch (Throwable t) {
@@ -303,15 +330,12 @@ public final class PairipVmBridge {
         // 3. Configure React Native release level (STABLE)
         try {
             Class<?> defaultsCls = Class.forName("com.facebook.react.defaults.a");
-            Class<?> levelCls;
-            try {
-                levelCls = Class.forName("m9.d");
-            } catch (ClassNotFoundException ignored) {
-                levelCls = Class.forName("U7.d");
+            Class<?> levelCls = firstClass("m9.d", "U7.d");
+            if (levelCls != null) {
+                Object defaultsInst = defaultsCls.getField("a").get(null);
+                Object stable = levelCls.getField("c").get(null);
+                defaultsCls.getMethod("e", levelCls).invoke(defaultsInst, stable);
             }
-            Object defaultsInst = defaultsCls.getField("a").get(null);
-            Object stable = levelCls.getField("c").get(null);
-            defaultsCls.getMethod("e", levelCls).invoke(defaultsInst, stable);
         } catch (Throwable ignored) {}
 
         // 4. Load native React/Hermes/AppModules via ReactNativeApplicationEntryPoint (com.facebook.react.H.a)
@@ -322,15 +346,12 @@ public final class PairipVmBridge {
             Log.e(TAG, "ReactNativeApplicationEntryPoint load failed", t);
         }
 
-        // 5. Notify Expo ApplicationLifecycleDispatcher (We.a.b in 1.26.0, Fc.a.b in 1.16.0)
+        // 5. Notify Expo ApplicationLifecycleDispatcher (af.a.b in 1.27.0, We.a.b in 1.26.0, Fc.a.b in 1.16.0)
         try {
-            Class<?> expoDispCls;
-            try {
-                expoDispCls = Class.forName("We.a");
-            } catch (ClassNotFoundException ignored) {
-                expoDispCls = Class.forName("Fc.a");
+            Class<?> expoDispCls = firstClass("af.a", "We.a", "Fc.a");
+            if (expoDispCls != null) {
+                expoDispCls.getMethod("b", Application.class).invoke(null, app);
             }
-            expoDispCls.getMethod("b", Application.class).invoke(null, app);
         } catch (Throwable t) {
             Log.w(TAG, "Expo ApplicationLifecycleDispatcher failed", t);
         }
@@ -356,22 +377,21 @@ public final class PairipVmBridge {
         } catch (Throwable ignored) {}
 
         try {
-            Class<?> splashCls;
-            try {
-                splashCls = Class.forName("Ri.d");
-            } catch (ClassNotFoundException ignored) {
-                splashCls = Class.forName("rg.d");
+            Class<?> splashCls = firstClass("Vi.d", "Ri.d", "rg.d");
+            if (splashCls != null) {
+                Object splash = splashCls.getField("a").get(null);
+                splashCls.getMethod("k", Activity.class).invoke(splash, activity);
             }
-            Object splash = splashCls.getField("a").get(null);
-            splashCls.getMethod("k", Activity.class).invoke(splash, activity);
         } catch (Throwable ignored) {}
 
         try {
             Class<?> reactActCls = Class.forName("com.facebook.react.n");
-            Method m = activity.getClass().getMethod("onCreate$004", reactActCls, Bundle.class);
-            m.invoke(null, activity, null);
+            Method m = findStaticSynthetic(activity.getClass(), "onCreate$", reactActCls, Bundle.class);
+            if (m != null) {
+                m.invoke(null, activity, null);
+            }
         } catch (Throwable t) {
-            Log.e(TAG, "MainActivity.onCreate$004 failed", t);
+            Log.e(TAG, "MainActivity.onCreate$ synthetic failed", t);
         }
     }
 
@@ -514,12 +534,36 @@ public final class PairipVmBridge {
         return null;
     }
 
+    private static Class<?> firstClass(String... names) {
+        for (String name : names) {
+            try {
+                return Class.forName(name);
+            } catch (ClassNotFoundException ignored) {}
+        }
+        return null;
+    }
+
+    private static Method findStaticSynthetic(Class<?> cls, String prefix, Class<?>... paramTypes) {
+        if (cls == null) return null;
+        for (Method m : cls.getMethods()) {
+            if (!m.getName().startsWith(prefix)) continue;
+            Class<?>[] pts = m.getParameterTypes();
+            if (pts.length != paramTypes.length) continue;
+            boolean ok = true;
+            for (int i = 0; i < pts.length; i++) {
+                if (pts[i] != paramTypes[i]) { ok = false; break; }
+            }
+            if (ok) return m;
+        }
+        return null;
+    }
+
     private static void handleGenericActivityOnCreate(Object[] args) {
         if (args.length < 1 || !(args[0] instanceof Activity)) return;
         Activity act = (Activity) args[0];
         Bundle savedState = (args.length > 1 && args[1] instanceof Bundle) ? (Bundle) args[1] : null;
         for (Method m : act.getClass().getMethods()) {
-            if ("onCreate$001".equals(m.getName())) {
+            if (m.getName().startsWith("onCreate$")) {
                 Class<?>[] pts = m.getParameterTypes();
                 if (pts.length == 2 && pts[0].isAssignableFrom(act.getClass()) && pts[1] == Bundle.class) {
                     try {
@@ -535,8 +579,23 @@ public final class PairipVmBridge {
         if (args.length < 1 || args[0] == null) return;
         Object target = args[0];
         try {
-            Method m = target.getClass().getMethod(methodName, baseType);
-            m.invoke(null, target);
+            if (!methodName.endsWith("$")) {
+                Method m = target.getClass().getMethod(methodName, baseType);
+                m.invoke(null, target);
+                return;
+            }
         } catch (Throwable ignored) {}
+        String prefix = methodName.contains("$") ? methodName.substring(0, methodName.indexOf('$') + 1) : methodName;
+        for (Method m : target.getClass().getMethods()) {
+            if (m.getName().startsWith(prefix)) {
+                Class<?>[] pts = m.getParameterTypes();
+                if (pts.length == 1 && pts[0].isAssignableFrom(target.getClass())) {
+                    try {
+                        m.invoke(null, target);
+                        return;
+                    } catch (Throwable ignored) {}
+                }
+            }
+        }
     }
 }

@@ -391,7 +391,14 @@ function patchPairipInDex(dexBuf) {
   return { pairipPatched, vmRunnerHooked };
 }
 
-const R8_OKHTTP_FACTORIES = [
+export const R8_OKHTTP_FACTORIES = [
+  {
+    factory: 'LL9/f;',
+    client: 'LXl/B;',
+    builder: 'LXl/B$a;',
+    newBuilder: 'E',
+    builderProto: '()LXl/B$a;',
+  },
   {
     factory: 'LL9/f;',
     client: 'LTl/B;',
@@ -408,25 +415,41 @@ const R8_OKHTTP_FACTORIES = [
   },
 ];
 
-function patchR8OkHttpFactoryInDex(dexBuf) {
-  const parsed = parseDexIndex(dexBuf);
+function patchR8OkHttpFactoryInDex(dexBuf, parsed = parseDexIndex(dexBuf), allDexes = null) {
   let spec = null;
-  let factoryMethods = null;
+  let target = null;
   for (const candidate of R8_OKHTTP_FACTORIES) {
     const methods = parsed.getClassMethods(candidate.factory);
-    if (methods) {
+    if (!methods) continue;
+    const match = methods.find((m) => m.name === 'c' && m.proto === candidate.builderProto && m.codeOff);
+    if (match) {
       spec = candidate;
-      factoryMethods = methods;
+      target = match;
       break;
     }
   }
-  if (!factoryMethods) {
+  if (!spec || !target) {
     return { okhttpPatched: false };
   }
 
-  const target = factoryMethods.find((m) => m.name === 'c' && m.proto === spec.builderProto && m.codeOff);
-  if (!target) {
-    return { okhttpPatched: false };
+  // Verify cross-DEX client class & newBuilder method when multiple DEX files are present.
+  let clientDexName = null;
+  if (Array.isArray(allDexes) && allDexes.length > 0) {
+    for (const d of allDexes) {
+      const clientMethods = d.parsed.getClassMethods(spec.client);
+      if (clientMethods) {
+        const hasNewBuilder = clientMethods.some(
+          (m) => m.name === spec.newBuilder && m.proto === spec.builderProto
+        );
+        if (!hasNewBuilder) {
+          throw new Error(
+            `R8 OkHttp client ${spec.client} in ${d.name} is missing ${spec.newBuilder}${spec.builderProto}`
+          );
+        }
+        clientDexName = d.name;
+        break;
+      }
+    }
   }
 
   const clientFieldId = parsed.findFieldId(spec.factory, 'b', spec.client);
@@ -440,15 +463,15 @@ function patchR8OkHttpFactoryInDex(dexBuf) {
     );
   }
 
-  // if (Lt8/f;.b != null) return Lt8/f;.b.C();
-  // return new Loj/A$a();
-  // 0000: sget-object v0, Lt8/f;.b:Loj/A;
+  // if (<factory>.b != null) return <factory>.b.<newBuilder>();
+  // return new <builder>();
+  // 0000: sget-object v0, <factory>.b:<client>
   // 0002: if-eqz v0, +7 (-> 0009)
-  // 0004: invoke-virtual {v0}, Loj/A;.C()Loj/A$a;
+  // 0004: invoke-virtual {v0}, <client>.<newBuilder>()<builder>
   // 0007: move-result-object v0
   // 0008: return-object v0
-  // 0009: new-instance v0, Loj/A$a;
-  // 000b: invoke-direct {v0}, Loj/A$a;.<init>()V
+  // 0009: new-instance v0, <builder>
+  // 000b: invoke-direct {v0}, <builder>.<init>()V
   // 000e: return-object v0
   const insns = [
     0x0062, clientFieldId,
@@ -467,7 +490,7 @@ function patchR8OkHttpFactoryInDex(dexBuf) {
     insns,
   });
 
-  return { okhttpPatched: true };
+  return { okhttpPatched: true, spec, clientDexName };
 }
 
 export function neutralizePairipAndHookOkHttp(entries) {
@@ -476,28 +499,32 @@ export function neutralizePairipAndHookOkHttp(entries) {
   let okhttpPatched = false;
   let modifiedDexFiles = 0;
 
+  const dexItems = [];
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (!/^classes\d*\.dex$/.test(entry.name)) continue;
     const dexBuf = Buffer.from(entryBytes(entry));
-    let dirty = false;
+    const parsed = parseDexIndex(dexBuf);
+    dexItems.push({ index: i, entry, name: entry.name, dexBuf, parsed, dirty: false });
+  }
 
-    const pRes = patchPairipInDex(dexBuf);
+  for (const item of dexItems) {
+    const pRes = patchPairipInDex(item.dexBuf);
     if (pRes.pairipPatched > 0) {
       pairipPatched += pRes.pairipPatched;
       if (pRes.vmRunnerHooked) vmRunnerHooked = true;
-      dirty = true;
+      item.dirty = true;
     }
 
-    const oRes = patchR8OkHttpFactoryInDex(dexBuf);
+    const oRes = patchR8OkHttpFactoryInDex(item.dexBuf, item.parsed, dexItems);
     if (oRes.okhttpPatched) {
       okhttpPatched = true;
-      dirty = true;
+      item.dirty = true;
     }
 
-    if (dirty) {
-      updateDexHashes(dexBuf);
-      entries[i] = createEntry(entry.name, dexBuf, { store: entry.method === 0 });
+    if (item.dirty) {
+      updateDexHashes(item.dexBuf);
+      entries[item.index] = createEntry(item.name, item.dexBuf, { store: item.entry.method === 0 });
       modifiedDexFiles++;
     }
   }

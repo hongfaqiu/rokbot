@@ -39,21 +39,21 @@ test('Update channel: patched builds publish through the real Host UpdatesManage
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rokbot-app-update-'));
   try {
     const keystore = path.join(tmp, 'signing.json');
-    const apk1 = path.join(tmp, 'out1', 'RokBot-1.26.0-rokbot.1.apk');
-    const apk2 = path.join(tmp, 'out2', 'RokBot-1.26.0-rokbot.2.apk');
+    const apk1 = path.join(tmp, 'out1', 'RokBot-1.27.0-rokbot.1.apk');
+    const apk2 = path.join(tmp, 'out2', 'RokBot-1.27.0-rokbot.2.apk');
     const r1 = await runPatchPipeline({ inputApk: FIXTURE_APK, outputApk: apk1, keystore, devSigning: true, rokbotBuild: 1, force: true });
     const r2 = await runPatchPipeline({ inputApk: FIXTURE_APK, outputApk: apk2, keystore, devSigning: true, rokbotBuild: 2, force: true });
-    assert.equal(r1.versionCode, 321201);
-    assert.equal(r1.versionName, '1.26.0-rokbot.1');
-    assert.equal(r1.upstreamVersionCode, 3212);
+    assert.equal(r1.versionCode, 328301);
+    assert.equal(r1.versionName, '1.27.0-rokbot.1');
+    assert.equal(r1.upstreamVersionCode, 3283);
     assert.equal(r1.devSigning, true);
-    assert.equal(r2.versionCode, 321202);
+    assert.equal(r2.versionCode, 328302);
     assert.equal(r2.signingCertificateSha256, r1.signingCertificateSha256);
 
     const info1 = inspectApkBuffer(fs.readFileSync(apk1));
     const info2 = inspectApkBuffer(fs.readFileSync(apk2));
     assert.equal(info2.packageName, 'dev.rokbot.local');
-    assert.equal(info2.versionCode, 321202);
+    assert.equal(info2.versionCode, 328302);
     assert.match(info2.certificateSha256, /^[0-9a-f]{64}$/);
     assert.equal(info1.certificateSha256, info2.certificateSha256, 'same signing identity => same certificate');
 
@@ -67,12 +67,12 @@ test('Update channel: patched builds publish through the real Host UpdatesManage
     // Fields UpdateManager.fetchAndParseManifest relies on.
     assert.equal(m.schema, ANDROID_UPDATE_SCHEMA);
     assert.equal(m.latest.packageName, 'dev.rokbot.local');
-    assert.equal(m.latest.versionName, '1.26.0-rokbot.2');
-    assert.equal(m.latest.versionCode, 321202, 'versionCode comes from the APK itself');
+    assert.equal(m.latest.versionName, '1.27.0-rokbot.2');
+    assert.equal(m.latest.versionCode, 328302, 'versionCode comes from the APK itself');
     assert.equal(m.latest.certificateSha256, info1.certificateSha256, 'certificate pinned to the installed signer');
     assert.equal(m.latest.apkSize, fs.statSync(apk2).size);
     assert.match(m.latest.apkSha256, /^[0-9a-f]{64}$/);
-    assert.equal(m.latest.apkUrl, 'http://host/local/updates/files/android/RokBot-1.26.0-rokbot.2.apk');
+    assert.equal(m.latest.apkUrl, 'http://host/local/updates/files/android/RokBot-1.27.0-rokbot.2.apk');
     assert.equal(m.latest.releaseNotes, '修复与改进');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

@@ -63,6 +63,10 @@ public final class R8OkHttpHook {
     }
 
     public static void evictConnections() {
+        if (R8OkHttpHook127.isAvailable()) {
+            R8OkHttpHook127.evictConnections();
+            return;
+        }
         if (R8OkHttpHook126.isAvailable()) {
             R8OkHttpHook126.evictConnections();
             return;
@@ -82,6 +86,14 @@ public final class R8OkHttpHook {
 
     private static synchronized void install(Context context, boolean forceRefresh) {
         if (context == null) return;
+        if (R8OkHttpHook127.isAvailable()) {
+            if (forceRefresh) {
+                R8OkHttpHook127.refresh(context);
+            } else {
+                R8OkHttpHook127.install(context);
+            }
+            return;
+        }
         if (R8OkHttpHook126.isAvailable()) {
             if (forceRefresh) {
                 R8OkHttpHook126.refresh(context);
@@ -183,6 +195,10 @@ public final class R8OkHttpHook {
 
     public static synchronized void hookReactContext(Context context, Object reactContext) {
         if (reactContext == null) return;
+        if (R8OkHttpHook127.isAvailable()) {
+            R8OkHttpHook127.hookReactContext(context, reactContext);
+            return;
+        }
         if (R8OkHttpHook126.isAvailable()) {
             R8OkHttpHook126.hookReactContext(context, reactContext);
             return;
