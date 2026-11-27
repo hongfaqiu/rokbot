@@ -14,22 +14,22 @@ This document describes how RokBot adapts the official Host and all five native 
 
 ---
 
-## 2. Host Server Adaptation (`host/`, baseline `2bb5e41`)
+## 2. Host Server Adaptation (`host/`, baseline `97658ad`, fallback `2bb5e41`)
 
-Key paths: `host/recipes/host/`, `host/release/patch-host.py`, `host/runtime/`, `host/server/`, `host/deploy/`.
+Key paths: `host/recipes/host/`, `host/recipes/host/2bb5e41/`, `host/release/patch-host.py`, `host/runtime/`, `host/server/`, `host/deploy/`.
 
-1. **Verification & Unpack**: Verifies the SHA-256 of `sand-host-bundle-2bb5e41.tgz` and unpacks the upstream `sand-host`, `blob-worker`, and `sand-eval-library` modules.
-2. **Byte-Diff Recipes (290+ `.gbp.gz` patches)**:
+1. **Verification & Unpack**: Verifies the SHA-256 of `sand-host-bundle-97658ad.tgz` and unpacks the upstream `sand-host`, `blob-worker`, and `sand-eval-library` modules (pass `--revision 2bb5e41` to fall back to the previous baseline).
+2. **Byte-Diff Recipes (265 `.gbp.gz` patches)**:
    - `host/release/patch-host.py` verifies each source file's hash against `host/recipes/host/manifest.json` and applies the compressed byte diffs;
-   - Redirects cloud auth, model calls, and telemetry to the local control plane (`host/server/`) and self-hosted runtime (`host/runtime/`);
-   - Adds multi-protocol model routing (Anthropic Messages / OpenAI Responses / OpenAI Chat), reliable compaction, and per-Bot model selection.
+   - Redirects cloud auth, model calls, and telemetry to the local control plane (`host/server/`) and self-hosted runtime (`host/runtime/`), neutralizing outbound telemetry including the new `desktop-telemetry` extension in `97658ad`;
+   - Adds multi-protocol model routing (Anthropic Messages / OpenAI Responses / OpenAI Chat), reliable compaction, per-Bot model selection, plus self-hosted `97658ad` Canvases (`local-canvas.mjs`), the `Skill` tool, and opt-in Tracked Tasks (`ROKBOT_TRACKED_TASKS=1`, `local-tracked-tasks.mjs`).
 3. **Self-Hosted Control Plane & Enhancements (`host/server/` + `host/deploy/`)**:
    - `host/deploy/supervisor.mjs` and `host/deploy/host-supervisor.mjs` supervise the public control plane (`8000`) and internal gateway (`1340`);
    - **ExternalShell Routing**: `host/runtime/host-computers.mjs` deterministically routes implicit execution to `ROKBOT_DEFAULT_MACHINE_ID` (failing loudly if unset while multiple machines are online);
    - **Non-Blocking MCP Startup**: `host/runtime/host-mcp.mjs` applies `box:1337` MCP registry config asynchronously with backoff (`2s → 30s`) so a cold box never blocks model hot-reload;
    - **In-App Model Config API**: `GET/PUT /local/model`, `POST /local/model/catalog`, and `POST /local/model/test` write `/data/model.env` and trigger hot-reload;
    - **4-Platform Auto-Update Server**: `host/server/updates.mjs` handles signed artifact uploads, ECDSA P-256 manifest signing, automatic Android `RBDELTA1` and desktop `RBD1` delta generation, and tokenized iOS OTA feeds.
-4. **Container Packaging**: `host/release/build-docker.py` and `Dockerfile.host` build multi-arch (`amd64`/`arm64`) `rokbot-host` images (with a resilient `15s` `HEALTHCHECK`) paired with `sand-box-2bb5e41`.
+4. **Container Packaging**: `host/release/build-docker.py` and `Dockerfile.host` build multi-arch (`amd64`/`arm64`) `rokbot-host` images (with a resilient `15s` `HEALTHCHECK`) paired with `sand-box-97658ad`.
 
 ---
 

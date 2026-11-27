@@ -26,10 +26,10 @@ python3 deploy.py up
 python3 deploy.py up --host-archive /path/to/host.tgz --box-archive /path/to/box.tar.gz
 ```
 
-- Box 归档校验通过后标记为 `rokbot-box-input:2bb5e41`，Compose 直接使用（也可通过 `ROKBOT_HOST_IMAGE=ghcr.io/hongfaqiu/rokbot/host` 与 `ROKBOT_BOX_IMAGE=ghcr.io/hongfaqiu/rokbot/box` 指定预构建镜像，并通过 `ROKBOT_HOST_ARCHIVE_URL` 覆盖归档镜像源）。离线归档按配置摘要校验，与 Docker 的镜像存储方式无关。
+- Box 归档校验通过后标记为 `rokbot-box-input:97658ad`，Compose 直接使用（也可通过 `ROKBOT_HOST_IMAGE=ghcr.io/hongfaqiu/rokbot/host` 与 `ROKBOT_BOX_IMAGE=ghcr.io/hongfaqiu/rokbot/box` 指定预构建镜像，并通过 `ROKBOT_HOST_ARCHIVE_URL` 覆盖归档镜像源）。离线归档按配置摘要校验，与 Docker 的镜像存储方式无关。
 - 已有实例把 `up` 换成 `update`；只构建不启动时，`release/build-docker.py` 接受相同参数。
 - 这些参数只替代原版下载。全离线还要预缓存基础镜像、系统包和 npm 依赖，ARM 同机还需要 amd64 的 `busybox:1.37`。ARM 独立 Host 不传 `--box-archive`。
-- `release/patch-host.py --archive ORIGINAL --output NEW_DIRECTORY` 可以单独生成 Host 文件；只做固定的字节复制和新增，不反编译。
+- `release/patch-host.py --archive ORIGINAL --output NEW_DIRECTORY` 可以单独生成 Host 文件（默认基线 `97658ad`；如需回退到旧基线，可传 `--revision 2bb5e41` 使用 `recipes/host/2bb5e41/` 配方）；只做固定的字节复制和新增，不反编译。
 
 ## 数据与备份
 

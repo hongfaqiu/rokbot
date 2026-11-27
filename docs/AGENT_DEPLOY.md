@@ -49,7 +49,7 @@ docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
 
 ### 路径 A：预构建镜像一键部署（推荐，小白友好）
 
-适用于已有预构建镜像（默认 `ghcr.io/hongfaqiu/rokbot/host:latest` 与 `ghcr.io/hongfaqiu/rokbot/box:2bb5e41`，支持替换为自建镜像源）。
+适用于已有预构建镜像（默认 `ghcr.io/hongfaqiu/rokbot/host:latest` 与 `ghcr.io/hongfaqiu/rokbot/box:97658ad`，支持替换为自建镜像源）。
 
 #### A1. 克隆仓库后一键部署
 
@@ -69,7 +69,7 @@ bash src/host/release/install-images.sh --local --prepare-only
 | `ROKBOT_PUBLIC_PORT` | `18080` | 映射到容器 `8000` 的对外端口 |
 | `ROKBOT_PUBLIC_URL` | 空 | 公网/局域网完整源地址（如 `https://bot.example.com`），iOS `itms-services` 必需 |
 | `ROKBOT_HOST_IMAGE` | `ghcr.io/hongfaqiu/rokbot/host:latest` | 多架构 Host 镜像（`amd64` + `arm64`），可替换为私有/国内镜像 |
-| `ROKBOT_BOX_IMAGE` | `ghcr.io/hongfaqiu/rokbot/box:2bb5e41` | 沙盒执行镜像（`linux/amd64`） |
+| `ROKBOT_BOX_IMAGE` | `ghcr.io/hongfaqiu/rokbot/box:97658ad` | 沙盒执行镜像（`linux/amd64`） |
 | `ROKBOT_BOX_TOKEN` | `local` | 内置 box 保持 `local`；分机执行节点设强随机密钥 |
 | `ROKBOT_ALLOW_DEVICE_MODEL_CONFIG` | `1` | `1` 允许已配对客户端直接在 App 内配置与测试模型 |
 | `ROKBOT_UPDATE_DIR` | `/data/updates` | 四端签名安装包与增量补丁的持久化存储目录 |
@@ -93,7 +93,7 @@ bash src/host/release/install-images.sh --local
 
 ### 路径 B：从源码本地构建镜像（无预构建镜像或二次开发）
 
-需准备官方 `sand-host-bundle-2bb5e41.tgz` 与 `sand-box-2bb5e41` 镜像，详见 [docs/AI-INSTALL.md](AI-INSTALL.md) 与 [host/README.md](../host/README.md)：
+需准备官方 `sand-host-bundle-97658ad.tgz` 与 `sand-box-97658ad` 镜像，详见 [docs/AI-INSTALL.md](AI-INSTALL.md) 与 [host/README.md](../host/README.md)：
 
 ```bash
 # 从仓库根目录执行环境检查与初始化构建
@@ -124,7 +124,7 @@ curl -fsS "http://127.0.0.1:${PORT}/connect/status"
    ```
 2. 引导用户在浏览器打开 `http://127.0.0.1:${PORT}/admin`，输入初始化密钥并设定管理员密码。
 3. 在管理后台「设备与通知」生成 6 位配对码（或直接使用管理员密码），在 Android / iOS / macOS / Windows / Web 客户端中完成配对。
-4. 配对完成后，客户端调用 `GET /local/status` 将返回 `initialized`、`needsModel`、`canConfigureModel`、`hostVersion`（`2bb5e41`）与 `defaultMachineId`。
+4. 配对完成后，客户端调用 `GET /local/status` 将返回 `initialized`、`needsModel`、`canConfigureModel`、`hostVersion`（`97658ad`）与 `defaultMachineId`。
 
 ---
 

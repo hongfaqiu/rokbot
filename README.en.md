@@ -184,7 +184,7 @@ This repository does not provide client installers. Each client is obtained as s
 | Web | Browser; can be added to the home screen | Interface from Windows 1.2.3 (recommended) or 0.71.2 | Build the bundle yourself and upload it to your Host | [`web/README.en.md`](web/README.en.md) |
 | Android | Native APK (arm64-v8a) | 1.26.0 (build 3212) | Build it yourself / From your Host | [`android/README.en.md`](android/README.en.md) |
 | iOS | IPA; bring your own decrypted official IPA | 1.27.0 (29519); 1.26.0 and 1.16.0 also accepted | Build and sign it yourself / From your Host | [`ios/README.en.md`](ios/README.en.md) |
-| Linux server | Docker: `host` (amd64 / arm64) and `box` (amd64) | Host baseline `2bb5e41` | Build the images from source / Pull the prebuilt images (access required) | [`host/README.en.md`](host/README.en.md) |
+| Linux server | Docker: `host` (amd64 / arm64) and `box` (amd64) | Host baseline `97658ad` (`2bb5e41` kept as fallback) | Build the images from source / Pull the prebuilt images (access required) | [`host/README.en.md`](host/README.en.md) |
 
 See [Getting the clients](#getting-the-clients) for both methods.
 

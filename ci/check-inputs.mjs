@@ -31,6 +31,17 @@ const host = await json('host/recipes/host/manifest.json');
 await checkRecipes('host/recipes/host', host.files, 'patch', host.sourceSha256);
 assert.match(host.archive.sha256, /^[0-9a-f]{64}$/);
 for (const key of ['manifestDigest', 'configDigest']) assert.match(host.box[key], /^sha256:[0-9a-f]{64}$/);
+const hostFallback = [];
+for (const [rev, entry] of Object.entries(host.fallback ?? {})) {
+  const fbRel = `host/recipes/host/${entry.manifest}`;
+  const fbDir = fbRel.replace(/\/manifest\.json$/, '');
+  const fb = await json(fbRel);
+  assert.equal(fb.archive.version, rev, `host fallback ${rev} version mismatch`);
+  assert.match(fb.archive.sha256, /^[0-9a-f]{64}$/);
+  for (const key of ['manifestDigest', 'configDigest']) assert.match(fb.box[key], /^sha256:[0-9a-f]{64}$/);
+  await checkRecipes(fbDir, fb.files, 'patch', fb.sourceSha256);
+  hostFallback.push(rev);
+}
 const dockerfile = (await bytes('host/release/Dockerfile.host')).toString().split(/\r?\n/);
 const runtimeArgs = dockerfile.filter(line => /^ARG RUNTIME_IMAGE(?:=|$)/.test(line));
 assert.equal(runtimeArgs.length, 1, 'missing or ambiguous runtime image argument');
@@ -45,7 +56,7 @@ for (const file of ['compose.yaml', 'compose.execution.yaml']) {
   assert.ok(compose.includes('${ROKBOT_BOX_IMAGE:-') && compose.includes(':-' + host.box.localTag + '}'), `stale desktop tag in ${file}`);
   assert.ok(compose.split('\n  box:\n')[1]?.includes(`platform: ${host.box.platform}`), `wrong desktop platform in ${file}`);
 }
-const versions = { host: host.archive.version, desktop: `${host.box.localTag} (${host.box.platform})` };
+const versions = { host: host.archive.version, ...(hostFallback.length ? { hostFallback } : {}), desktop: `${host.box.localTag} (${host.box.platform})` };
 async function checkDesktop(dir) {
   const original = await json(`${dir}/supported.json`);
   assert.match(original.archive.sha256, /^[0-9a-f]{64}$/);

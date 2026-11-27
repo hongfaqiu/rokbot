@@ -182,7 +182,7 @@ Android 截图为英文界面，桌面端和管理页截图为中文界面。And
 | 网页版 | 浏览器，可添加到主屏幕 | 界面取自 Windows 1.2.3（推荐）或 0.71.2 | 自行构建界面包，上传到自己的 Host | [`web/README.md`](web/README.md) |
 | Android | 原生 APK（arm64-v8a） | 1.26.0（build 3212） | 自行构建 / Host 分发 | [`android/README.md`](android/README.md) |
 | iOS | IPA，需要自备解密的原版 IPA | 1.27.0（29519），也接受 1.26.0、1.16.0 | 自行构建并签名 / Host 分发 | [`ios/README.md`](ios/README.md) |
-| Linux 服务端 | Docker：`host`（amd64 / arm64）和 `box`（amd64） | Host 基线 `2bb5e41` | 从源码构建镜像 / 拉取预构建镜像（需要访问权限） | [`host/README.md`](host/README.md) |
+| Linux 服务端 | Docker：`host`（amd64 / arm64）和 `box`（amd64） | Host 基线 `97658ad`（回退保留 `2bb5e41`） | 从源码构建镜像 / 拉取预构建镜像（需要访问权限） | [`host/README.md`](host/README.md) |
 
 「自行构建」和「Host 分发」的具体做法见[获取客户端](#获取客户端)。
 

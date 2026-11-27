@@ -14,22 +14,22 @@
 
 ---
 
-## 二、Host 服务端改造流程（`host/`，基线 `2bb5e41`）
+## 二、Host 服务端改造流程（`host/`，基线 `97658ad`，回退保留 `2bb5e41`）
 
-核心目录：`host/recipes/host/`、`host/release/patch-host.py`、`host/runtime/`、`host/server/`、`host/deploy/`。
+核心目录：`host/recipes/host/`、`host/recipes/host/2bb5e41/`、`host/release/patch-host.py`、`host/runtime/`、`host/server/`、`host/deploy/`。
 
-1. **输入校验与解包**：校验本地 `sand-host-bundle-2bb5e41.tgz` 的 SHA-256，解压出上游 `sand-host` 运行时与 `blob-worker` / `sand-eval-library` 模块。
-2. **字节差分补丁（290+ 项 `.gbp.gz`）**：
+1. **输入校验与解包**：校验本地 `sand-host-bundle-97658ad.tgz` 的 SHA-256，解压出上游 `sand-host` 运行时与 `blob-worker` / `sand-eval-library` 模块（如需回退旧基线，可传 `--revision 2bb5e41`）。
+2. **字节差分补丁（265 项 `.gbp.gz`）**：
    - `host/release/patch-host.py` 按 `host/recipes/host/manifest.json` 逐文件校验原文件哈希并应用差分补丁；
-   - 重定向云端认证、模型调用与遥测上报，屏蔽外联埋点；
-   - 接入 `host/runtime/` 中的多协议模型适配层（Anthropic Messages / OpenAI Responses / OpenAI Chat）、可靠上下文压缩与按 Bot 独立路由。
+   - 重定向云端认证、模型调用与遥测上报，屏蔽外联埋点（含 `97658ad` 新增的 `desktop-telemetry` 扩展）；
+   - 接入 `host/runtime/` 中的多协议模型适配层（Anthropic Messages / OpenAI Responses / OpenAI Chat）、可靠上下文压缩、按 Bot 独立路由，以及 `97658ad` 自托管 Canvas（`local-canvas.mjs`）、`Skill` 工具与可选 Tracked Tasks（`ROKBOT_TRACKED_TASKS=1`、`local-tracked-tasks.mjs`）。
 3. **自托管控制面与增强能力（`host/server/` + `host/deploy/`）**：
    - `host/deploy/supervisor.mjs` 与 `host/deploy/host-supervisor.mjs` 统一托管外层控制面（`8000`）与内部网关运行时（`1340`）；
    - **ExternalShell 多机路由**：`host/runtime/host-computers.mjs` 将隐式执行确定性地路由至 `ROKBOT_DEFAULT_MACHINE_ID`（多机在线且未配置时返回明确错误，不随机落点）；
    - **非阻塞 MCP 启动**：`host/runtime/host-mcp.mjs` 将 `box:1337` 的 MCP 扩展注册改为后台指数退避重试（`2s → 30s`），避免冷启动沙盒阻塞模型热重载；
    - **应用内模型配置 API**：`GET/PUT /local/model`、`POST /local/model/catalog`、`POST /local/model/test` 写入 `/data/model.env` 并触发热重载；
    - **四端增量更新服务端**：`host/server/updates.mjs` 负责大文件上传、ECDSA P-256 清单签名、自动生成 Android `RBDELTA1` / 桌面 `RBD1` 增量补丁以及 iOS 令牌化 OTA 端点。
-4. **容器封装**：`host/release/build-docker.py` 与 `Dockerfile.host` 构建多架构（`amd64`/`arm64`）`rokbot-host` 镜像（含 `15s` 抗高负载 `HEALTHCHECK`），搭配 `sand-box-2bb5e41` 运行。
+4. **容器封装**：`host/release/build-docker.py` 与 `Dockerfile.host` 构建多架构（`amd64`/`arm64`）`rokbot-host` 镜像（含 `15s` 抗高负载 `HEALTHCHECK`），搭配 `sand-box-97658ad` 运行。
 
 ---
 

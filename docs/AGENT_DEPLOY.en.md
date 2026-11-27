@@ -49,7 +49,7 @@ Confirm these 4 items once with the user (unless already answered in context):
 
 ### Path A: Prebuilt Mirror Image One-Click Deploy (Recommended)
 
-Uses prebuilt images (`ghcr.io/hongfaqiu/rokbot/host:latest` and `ghcr.io/hongfaqiu/rokbot/box:2bb5e41` by default, or any user-configured mirror).
+Uses prebuilt images (`ghcr.io/hongfaqiu/rokbot/host:latest` and `ghcr.io/hongfaqiu/rokbot/box:97658ad` by default, or any user-configured mirror).
 
 #### A1. One-Click Setup From a Clone
 
@@ -69,7 +69,7 @@ Review and edit `.env` (created with mode `0600`). Key variables:
 | `ROKBOT_PUBLIC_PORT` | `18080` | Published port mapped to container port `8000` |
 | `ROKBOT_PUBLIC_URL` | empty | Public HTTPS origin (e.g. `https://bot.example.com`), required for iOS `itms-services` |
 | `ROKBOT_HOST_IMAGE` | `ghcr.io/hongfaqiu/rokbot/host:latest` | Multi-arch Host image (`amd64` + `arm64`); override for mirrors |
-| `ROKBOT_BOX_IMAGE` | `ghcr.io/hongfaqiu/rokbot/box:2bb5e41` | Execution sandbox image (`linux/amd64`) |
+| `ROKBOT_BOX_IMAGE` | `ghcr.io/hongfaqiu/rokbot/box:97658ad` | Execution sandbox image (`linux/amd64`) |
 | `ROKBOT_BOX_TOKEN` | `local` | Keep `local` for bundled box; use a strong random token for split execution nodes |
 | `ROKBOT_ALLOW_DEVICE_MODEL_CONFIG` | `1` | `1` enables in-app model configuration (`/local/model*`) for authorized clients |
 | `ROKBOT_UPDATE_DIR` | `/data/updates` | Persistent storage for 4-platform update packages and manifests |
@@ -93,7 +93,7 @@ bash src/host/release/install-images.sh --local
 
 ### Path B: Local Build From Source (Custom/Offline Builds)
 
-Requires `sand-host-bundle-2bb5e41.tgz` and `sand-box-2bb5e41`. See [docs/AI-INSTALL.en.md](AI-INSTALL.en.md) and [host/README.en.md](../host/README.en.md):
+Requires `sand-host-bundle-97658ad.tgz` and `sand-box-97658ad`. See [docs/AI-INSTALL.en.md](AI-INSTALL.en.md) and [host/README.en.md](../host/README.en.md):
 
 ```bash
 python3 host/deploy.py doctor < /dev/null
@@ -123,7 +123,7 @@ Onboarding steps:
    ```
 2. Open `http://127.0.0.1:${PORT}/admin`, enter the setup key, and set the admin password.
 3. Generate a 6-character pairing code on the Devices page (or sign in with the admin password) from Android, iOS, macOS, Windows, or Web.
-4. Once paired, `GET /local/status` returns `initialized`, `needsModel`, `canConfigureModel`, `hostVersion` (`2bb5e41`), and `defaultMachineId`.
+4. Once paired, `GET /local/status` returns `initialized`, `needsModel`, `canConfigureModel`, `hostVersion` (`97658ad`), and `defaultMachineId`.
 
 ---
 

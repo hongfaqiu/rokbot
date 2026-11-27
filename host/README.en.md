@@ -26,10 +26,10 @@ By default the build downloads the originals from pinned sources and verifies th
 python3 deploy.py up --host-archive /path/to/host.tgz --box-archive /path/to/box.tar.gz
 ```
 
-- A verified Box archive is tagged `rokbot-box-input:2bb5e41` and used by Compose directly (you can also set `ROKBOT_HOST_IMAGE=ghcr.io/hongfaqiu/rokbot/host` / `ROKBOT_BOX_IMAGE=ghcr.io/hongfaqiu/rokbot/box` for prebuilt images and `ROKBOT_HOST_ARCHIVE_URL` for archive mirror overrides). Offline archives are checked by their config digest, whatever image store Docker uses.
+- A verified Box archive is tagged `rokbot-box-input:97658ad` and used by Compose directly (you can also set `ROKBOT_HOST_IMAGE=ghcr.io/hongfaqiu/rokbot/host` / `ROKBOT_BOX_IMAGE=ghcr.io/hongfaqiu/rokbot/box` for prebuilt images and `ROKBOT_HOST_ARCHIVE_URL` for archive mirror overrides). Offline archives are checked by their config digest, whatever image store Docker uses.
 - For an existing instance replace `up` with `update`; to build without starting, `release/build-docker.py` takes the same options.
 - These options only replace the original downloads. A fully offline build also needs the base images, system packages and npm dependencies cached, and a single ARM machine needs amd64 `busybox:1.37`. A standalone ARM Host takes no `--box-archive`.
-- `release/patch-host.py --archive ORIGINAL --output NEW_DIRECTORY` generates the Host files on their own, with fixed byte copies and additions only, no decompilation.
+- `release/patch-host.py --archive ORIGINAL --output NEW_DIRECTORY` generates the Host files on their own (defaults to `97658ad`; pass `--revision 2bb5e41` to fall back to the `recipes/host/2bb5e41/` recipes), with fixed byte copies and additions only, no decompilation.
 
 ## Data and backups
 
