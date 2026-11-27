@@ -3,7 +3,7 @@
 #   docker compose --env-file .env -f docker-compose.images.yml up -d
 #
 # By default, host uses ghcr.io/hongfaqiu/rokbot/host:latest (linux/amd64 + linux/arm64)
-# and box uses ghcr.io/hongfaqiu/rokbot/box:2bb5e41 (linux/amd64).
+# and box uses ghcr.io/hongfaqiu/rokbot/box:97658ad (linux/amd64).
 # Set ROKBOT_HOST_IMAGE / ROKBOT_BOX_IMAGE in .env to pin a release tag or mirror.
 name: rokbot
 
@@ -69,7 +69,7 @@ services:
         max-file: "3"
 
   box:
-    image: ${ROKBOT_BOX_IMAGE:-ghcr.io/hongfaqiu/rokbot/box:2bb5e41}
+    image: ${ROKBOT_BOX_IMAGE:-ghcr.io/hongfaqiu/rokbot/box:97658ad}
     platform: linux/amd64
     restart: unless-stopped
     # /usr/local/bin/start-sand-box requires default container privileges to start X11/VNC/box user services.

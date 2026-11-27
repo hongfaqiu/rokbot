@@ -59,14 +59,31 @@ def verify_reliability_manifest(seed):
             raise ValueError('Prepared reliability manifest mismatch: ' + name)
 
 
+def load_manifest(revision=None):
+    recipes_root = ROOT / 'recipes/host'
+    if revision:
+        primary = json.loads((recipes_root / 'manifest.json').read_text())
+        if revision == primary['archive']['version']:
+            return recipes_root, primary
+        fallback = (primary.get('fallback') or {}).get(revision)
+        if not fallback or not isinstance(fallback.get('manifest'), str):
+            raise ValueError(f'Unsupported Host revision: {revision}')
+        manifest_path = (recipes_root / fallback['manifest']).resolve()
+        if recipes_root.resolve() not in manifest_path.parents or not manifest_path.is_file():
+            raise ValueError(f'Invalid fallback Host manifest: {revision}')
+        return manifest_path.parent, json.loads(manifest_path.read_text())
+    return recipes_root, json.loads((recipes_root / 'manifest.json').read_text())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, help='User-provided stable Host archive; otherwise download the pinned URL')
+    parser.add_argument('--revision', help='Pinned Host revision to apply (defaults to the primary manifest revision; supports documented fallbacks)')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists():
         parser.error('Output exists; select a new directory')
-    spec = json.loads((ROOT / 'recipes/host/manifest.json').read_text())
+    recipes_dir, spec = load_manifest(args.revision)
     started = time.monotonic()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='rokbot-host-', dir=args.output.parent) as temporary:
@@ -99,7 +116,7 @@ def main():
             target = seed / target_path
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open('xb') as output:
-                source.write_verified(load(ROOT / 'recipes/host' / record['patch']), output)
+                source.write_verified(load(recipes_dir / record['patch']), output)
         verify_reliability_manifest(seed)
         args.output.mkdir(mode=0o700)
         shutil.move(str(original), str(args.output / 'original'))

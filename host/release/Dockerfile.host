@@ -1,5 +1,5 @@
 ARG PATCH_IMAGE=rokbot-patch-base:local
-ARG RUNTIME_IMAGE=rokbot-box-input:2bb5e41
+ARG RUNTIME_IMAGE=rokbot-box-input:97658ad
 FROM ${PATCH_IMAGE} AS patch
 COPY inputs/host.tgz /inputs/host.tgz
 RUN python3 release/patch-host.py --archive /inputs/host.tgz --output /generated

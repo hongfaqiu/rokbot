@@ -38,7 +38,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
   box:
     # Override with ROKBOT_BOX_IMAGE=ghcr.io/hongfaqiu/rokbot/box:latest when using prebuilt images.
-    image: ${ROKBOT_BOX_IMAGE:-${GROKBOT_BOX_IMAGE:-rokbot-box-input:2bb5e41}}
+    image: ${ROKBOT_BOX_IMAGE:-${GROKBOT_BOX_IMAGE:-rokbot-box-input:97658ad}}
     platform: linux/amd64
     restart: unless-stopped
     shm_size: ${ROKBOT_BOX_SHM_SIZE:-${GROKBOT_BOX_SHM_SIZE:-1gb}}

@@ -1,21 +1,27 @@
 {
   "schema": "rokbot-host-inputs/v1",
   "sourceSha256": {
-    "host-main.cjs": "ce36175a247174eb490d1af673d7216127015159e1e8b43b3c2beae5455ad3ba",
-    "agent-isolation/agent-store-worker.cjs": "d6125a21731cd6f53fa21ce25cc72057fff05b07f605558d6db4da141fed5314",
-    "sand-eval-runner.cjs": "9ad8e77180a40531f55a98d890e650e8bf9bd9e2053e5dd49c82c8e3b89f12f2"
+    "host-main.cjs": "52e0b110005401ae5e206d9f360706063b38bf823bef8dc6817098396bfc0f62",
+    "agent-isolation/agent-store-worker.cjs": "a6050de4460cc6b318d277d1e0db612eef8e976d37cd3eb5f72ecbee0a3d32ba",
+    "sand-eval-runner.cjs": "ced12eb320b2c813e9cd01122eef100792212d2c2c02caf866730a33ee4e456a"
   },
   "box": {
     "repository": "public.ecr.aws/k0i0n2g5/cursorenvironments/universal",
     "platform": "linux/amd64",
-    "manifestDigest": "sha256:9496581b9a2b5b4e7cefa4dc25ab28d274d2cafb045d07ad4a17b88f02308813",
-    "configDigest": "sha256:958509d2e46d45cc3bfaaa68d5f1408c710e646540146bea706057a3d0124e96",
-    "localTag": "rokbot-box-input:2bb5e41"
+    "manifestDigest": "sha256:0fb0292bed8e987f2f2e15835c224c590f79809957dbc6f35980a43a04fdc534",
+    "configDigest": "sha256:60bfb7bc5230a83f439dcd45ad9e956178413d10a4a1abe157830f798302d4c1",
+    "localTag": "rokbot-box-input:97658ad"
   },
   "archive": {
-    "version": "2bb5e41",
-    "url": "https://public-asphr-vm-daemon-bucket.s3.us-east-1.amazonaws.com/sand-host-bundle/sand-host-bundle-2bb5e41.tgz",
-    "sha256": "1eb09683c89120cbef062fc20c1b15f1fd297ba2bf8900622679a6b703b7cece"
+    "version": "97658ad",
+    "url": "https://public-asphr-vm-daemon-bucket.s3.us-east-1.amazonaws.com/sand-host-bundle/sand-host-bundle-97658ad.tgz",
+    "sha256": "732560ac9e99a2ff239fc20f4d1a282f51ed3b5e73ae508bcfafaf46a824d132"
+  },
+  "fallback": {
+    "2bb5e41": {
+      "manifest": "2bb5e41/manifest.json",
+      "boxLocalTag": "rokbot-box-input:2bb5e41"
+    }
   },
   "files": [
     {
@@ -139,7 +145,7 @@
       "patch": "recovered-core__stable__computer-box-windows.mjs.gbp.gz"
     },
     {
-      "source": "host-main.cjs",
+      "source": "sand-eval-runner.cjs",
       "target": "recovered-core/stable/computer-computer-use.mjs",
       "patch": "recovered-core__stable__computer-computer-use.mjs.gbp.gz"
     },
@@ -159,12 +165,12 @@
       "patch": "recovered-core__stable__computer-provenance.json.gbp.gz"
     },
     {
-      "source": "host-main.cjs",
+      "source": "sand-eval-runner.cjs",
       "target": "recovered-core/stable/computer-sand-computer-auto-review.mjs",
       "patch": "recovered-core__stable__computer-sand-computer-auto-review.mjs.gbp.gz"
     },
     {
-      "source": "host-main.cjs",
+      "source": "sand-eval-runner.cjs",
       "target": "recovered-core/stable/computer-sand-computer-tool.mjs",
       "patch": "recovered-core__stable__computer-sand-computer-tool.mjs.gbp.gz"
     },
@@ -779,7 +785,7 @@
       "patch": "release-reliability__computer-box-windows.mjs.gbp.gz"
     },
     {
-      "source": "host-main.cjs",
+      "source": "sand-eval-runner.cjs",
       "target": "release-reliability/computer-computer-use.mjs",
       "patch": "release-reliability__computer-computer-use.mjs.gbp.gz"
     },
@@ -799,12 +805,12 @@
       "patch": "release-reliability__computer-provenance.json.gbp.gz"
     },
     {
-      "source": "host-main.cjs",
+      "source": "sand-eval-runner.cjs",
       "target": "release-reliability/computer-sand-computer-auto-review.mjs",
       "patch": "release-reliability__computer-sand-computer-auto-review.mjs.gbp.gz"
     },
     {
-      "source": "host-main.cjs",
+      "source": "sand-eval-runner.cjs",
       "target": "release-reliability/computer-sand-computer-tool.mjs",
       "patch": "release-reliability__computer-sand-computer-tool.mjs.gbp.gz"
     },
