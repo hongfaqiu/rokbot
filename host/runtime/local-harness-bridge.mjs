@@ -1,11 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withLocalLibraryRunner } from './host-library-files.mjs';
 import { BackgroundRecovery, pendingWakeFilePath, resolveBackgroundRecoveryConfig } from './background-recovery.mjs';
 import { AUTO_REVIEW_AWAITING_TAB_ID, autoReviewModesFor, rokbotCardText } from './host-auto-review.mjs';
+import { createLocalCanvasPort } from './local-canvas.mjs';
+import { createLocalTrackedTasks } from './local-tracked-tasks.mjs';
 
 const patchedLibraries = new WeakSet();
 
@@ -528,14 +530,102 @@ export function localAutoReviewOptions({ tm, session, autoReviewExt, settingsExt
   };
 }
 
+function isEnvDisabled(env, key) {
+  return ['0', 'false', 'off', 'no'].includes(String(env?.[key] ?? '').trim().toLowerCase());
+}
+
+function isEnvEnabled(env, key) {
+  return ['1', 'true', 'on', 'yes'].includes(String(env?.[key] ?? '').trim().toLowerCase());
+}
+
+/**
+ * Self-hosted canvas port (`ReadCanvas`, `WriteCanvas`, `EditCanvas`, `ListCanvases`).
+ * Enabled whenever an agent directory is available; `ROKBOT_LOCAL_CANVAS=0` disables it.
+ */
+export function localCanvasOptions({ agentDir, agentId } = {}, env = process.env) {
+  if (!agentDir || isEnvDisabled(env, 'ROKBOT_LOCAL_CANVAS')) return {};
+  const cloudCanvas = createLocalCanvasPort({ agentDir, agentId });
+  return cloudCanvas ? { cloudCanvas } : {};
+}
+
+/**
+ * Self-hosted tracked tasks (`CreateTrackedTasks`, `ListTrackedTasks`, `UpdateTrackedTasks`,
+ * `UpdateTrackedTaskTags`, and `task_ids` on `Subagent`). Opt-in via `ROKBOT_TRACKED_TASKS=1`
+ * to match upstream `SAND_RUNNER_GATE_DEFAULTS.tasks = false` (enabling it renames `Task` to
+ * `Subagent` and requires `task_ids` on every subagent launch).
+ */
+export function localTrackedTasksOptions({ agentDir } = {}, env = process.env) {
+  if (!agentDir || !isEnvEnabled(env, 'ROKBOT_TRACKED_TASKS')) return {};
+  const trackedTasks = createLocalTrackedTasks({ agentDir });
+  return trackedTasks ? { trackedTasks } : {};
+}
+
+/**
+ * Self-hosted Skill loading tool support (`Skill` tool via `virtualSkillFiles: true` and
+ * Host-side `readManagedSkill`). Reads skill files directly from the Host filesystem while
+ * leaving all non-skill paths untouched so they fall through to the box.
+ */
+export function localSkillToolOptions(baseSkillStore, env = process.env) {
+  const store = baseSkillStore ?? { list: () => [], listAll: () => [] };
+  if (isEnvDisabled(env, 'ROKBOT_SKILL_TOOL')) {
+    return { skillStore: store };
+  }
+  const skillStore = new Proxy(store, {
+    get(target, key) {
+      if (key === 'virtualSkillFiles') return true;
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const readManagedSkill = (args) => {
+    const rawPath = typeof args?.path === 'string' ? args.path.trim() : '';
+    if (!rawPath) return undefined;
+    const allSkills = typeof store.listAll === 'function'
+      ? store.listAll()
+      : (typeof store.list === 'function' ? store.list() : []);
+    if (!Array.isArray(allSkills) || allSkills.length === 0) return undefined;
+    const normalized = resolve(rawPath);
+    let matchedPath;
+    for (const skill of allSkills) {
+      const skillFile = typeof skill?.filePath === 'string' ? skill.filePath.trim() : '';
+      if (!skillFile) continue;
+      const skillFileResolved = resolve(skillFile);
+      if (normalized === skillFileResolved || isPathInside(dirname(skillFileResolved), normalized)) {
+        matchedPath = normalized;
+        break;
+      }
+    }
+    if (!matchedPath) return undefined;
+    if (!existsSync(matchedPath)) {
+      return { result: { case: 'fileNotFound', value: { path: args.path } } };
+    }
+    try {
+      const content = readFileSync(matchedPath, 'utf8');
+      return {
+        result: {
+          case: 'success',
+          value: {
+            path: args.path,
+            output: { case: 'content', value: content },
+            totalLines: content.split('\n').length,
+            fileSize: BigInt(Buffer.byteLength(content, 'utf8')),
+          },
+        },
+      };
+    } catch (error) {
+      return { result: { case: 'error', value: { error: error?.message ?? String(error) } } };
+    }
+  };
+  return { skillStore, readManagedSkill };
+}
+
 /**
  * Desktop surface of the forever-box (computerUse subagent, Screenshot/Computer, browser handoff,
  * RequestUserForm). Upstream SandAgentRunner defaults `remoteBoxHasDesktop ?? false`, so the host
  * must opt in explicitly. The rokbot box image ships a desktop; ROKBOT_REMOTE_BOX_DESKTOP=0 disables it.
  */
 export function remoteBoxDesktopOptions(remoteBox, env = process.env) {
-  const override = String(env.ROKBOT_REMOTE_BOX_DESKTOP ?? '').trim().toLowerCase();
-  const disabled = ['0', 'false', 'off', 'no'].includes(override);
+  const disabled = isEnvDisabled(env, 'ROKBOT_REMOTE_BOX_DESKTOP');
   const hasDesktop = Boolean(remoteBox) && !disabled;
   return {
     remoteBoxHasDesktop: hasDesktop,
@@ -576,12 +666,18 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
     ? memoryExt.createAgentStore(agentDir)
     : createLocalAgentMemoryStore(library, agentDir);
 
+  const canvasOpts = localCanvasOptions({ agentDir, agentId });
+  const trackedTasksOpts = localTrackedTasksOptions({ agentDir });
+  const skillOpts = localSkillToolOptions(session.skills);
+
   const baseGates = typeof pt.defaultSandRunnerGates === 'function'
     ? pt.defaultSandRunnerGates('local-host')
     : {};
   const gates = {
     ...baseGates,
     cloudAgentsDisabledByTeam: () => teamAdminPolicyExt?.isCloudAgentsDisabled?.() ?? true,
+    ...(canvasOpts.cloudCanvas ? { cloudCanvasTools: () => true } : {}),
+    ...(trackedTasksOpts.trackedTasks ? { tasks: () => true } : {}),
   };
 
   let lastSentMessageId = null;
@@ -699,7 +795,9 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
     memorySnapshots: session.db,
     profilePromptSnapshots: session.db,
     automationStore: session.automations,
-    skillStore: session.skills ?? { list: () => [], listAll: () => [] },
+    ...skillOpts,
+    ...canvasOpts,
+    ...trackedTasksOpts,
     ...localAutoReviewOptions({ tm, session, autoReviewExt, settingsExt,
       postCard: (message) => transport.onUpdate({ type: 'send-message', message, timestampMs: Date.now() }) }),
     localToolPermission: createLocalToolPermissionAdapter(localToolPermissionExt),

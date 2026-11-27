@@ -136,6 +136,7 @@ export function createExtensionStarter(library, modelConfig) {
   const replacements = {
     auth: () => localAuth(),
     'agent-identity': context => localIdentity(context),
+    'desktop-telemetry': () => ({}),
     orbit: () => ({}),
     'identity-socket': () => ({ isEnabled: false }),
     'user-skills-cache': () => ({ isEnabled: false }),
