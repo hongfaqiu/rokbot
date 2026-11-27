@@ -107,7 +107,10 @@ class PinnedPatchTests(unittest.TestCase):
     def test_all_manifest_recipes_use_rokbot_schema_without_legacy_grokbot_shims(self):
         recipes_dir = Path(__file__).resolve().parents[1] / 'recipes' / 'host'
         manifest = json.loads((recipes_dir / 'manifest.json').read_text())
-        self.assertEqual(manifest['archive']['version'], '2bb5e41')
+        self.assertEqual(manifest['archive']['version'], '97658ad')
+        self.assertIn('2bb5e41', manifest.get('fallback', {}))
+        fallback_manifest = json.loads((recipes_dir / manifest['fallback']['2bb5e41']['manifest']).read_text())
+        self.assertEqual(fallback_manifest['archive']['version'], '2bb5e41')
         disk_recipes = sorted(p.name for p in recipes_dir.glob('*.gbp.gz'))
         manifest_recipes = sorted(entry['patch'] for entry in manifest['files'])
         self.assertEqual(disk_recipes, manifest_recipes)
@@ -126,9 +129,9 @@ class PinnedPatchTests(unittest.TestCase):
             self.skipTest('set ROKBOT_TEST_HOST_ARCHIVE to run the pinned Host recipe check')
         expected = {
             'recovered-core__stable__harness-turn-run-shell.mjs.gbp.gz': (
-                '8d6999cabcbe16c735fb35d4f66013dca22166c642429f1fdb4bc3ce0c639d5f', 1506, ()),
+                '6baf0b160d518ab26d95cda8aa80657ea6c0ba5090317a3b69f5e0101b3c07e9', 1491, ()),
             'release-reliability__harness-turn-run-shell.mjs.gbp.gz': (
-                'f84d9b1fee5d0a6e74044fd67a0b547ed1276b9c1f2601406e43790706a795f7', 1514, (869,)),
+                '865a63d935c95d22cb11dd28b0b3980f47351ab654fc5f0300d61cf39ade9d0a', 1498, (870,)),
         }
         recipes = Path(__file__).resolve().parents[1] / 'recipes' / 'host'
         for name, (digest, lines, positions) in expected.items():

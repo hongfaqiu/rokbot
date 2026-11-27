@@ -50,15 +50,17 @@ function closeHttp(server) {
   return new Promise((resolveClose) => server.close(() => resolveClose()));
 }
 
-test('2bb5e41 manifest, recipes, runtime shims, and deploy error status are aligned', async () => {
+test('97658ad manifest, recipes, runtime shims, and deploy error status are aligned', async () => {
   const manifest = JSON.parse(await readFile(join(HOST_DIR, 'recipes/host/manifest.json'), 'utf8'));
-  assert.equal(manifest.archive.version, '2bb5e41');
-  assert.equal(manifest.archive.sha256, '1eb09683c89120cbef062fc20c1b15f1fd297ba2bf8900622679a6b703b7cece');
-  assert.equal(manifest.sourceSha256['host-main.cjs'], 'ce36175a247174eb490d1af673d7216127015159e1e8b43b3c2beae5455ad3ba');
-  assert.equal(manifest.sourceSha256['agent-isolation/agent-store-worker.cjs'], 'd6125a21731cd6f53fa21ce25cc72057fff05b07f605558d6db4da141fed5314');
-  assert.equal(manifest.sourceSha256['sand-eval-runner.cjs'], '9ad8e77180a40531f55a98d890e650e8bf9bd9e2053e5dd49c82c8e3b89f12f2');
-  assert.equal(manifest.box.localTag, 'rokbot-box-input:2bb5e41');
-  assert.equal(manifest.box.manifestDigest, 'sha256:9496581b9a2b5b4e7cefa4dc25ab28d274d2cafb045d07ad4a17b88f02308813');
+  assert.equal(manifest.archive.version, '97658ad');
+  assert.equal(manifest.archive.sha256, '732560ac9e99a2ff239fc20f4d1a282f51ed3b5e73ae508bcfafaf46a824d132');
+  assert.equal(manifest.sourceSha256['host-main.cjs'], '52e0b110005401ae5e206d9f360706063b38bf823bef8dc6817098396bfc0f62');
+  assert.equal(manifest.sourceSha256['agent-isolation/agent-store-worker.cjs'], 'a6050de4460cc6b318d277d1e0db612eef8e976d37cd3eb5f72ecbee0a3d32ba');
+  assert.equal(manifest.sourceSha256['sand-eval-runner.cjs'], 'ced12eb320b2c813e9cd01122eef100792212d2c2c02caf866730a33ee4e456a');
+  assert.equal(manifest.box.localTag, 'rokbot-box-input:97658ad');
+  assert.equal(manifest.box.manifestDigest, 'sha256:0fb0292bed8e987f2f2e15835c224c590f79809957dbc6f35980a43a04fdc534');
+  assert.equal(manifest.box.configDigest, 'sha256:60bfb7bc5230a83f439dcd45ad9e956178413d10a4a1abe157830f798302d4c1');
+  assert.equal(manifest.fallback?.['2bb5e41']?.manifest, '2bb5e41/manifest.json');
 
   const recipeFiles = (await readdir(join(HOST_DIR, 'recipes/host'))).filter(f => f.endsWith('.gbp.gz')).sort();
   const manifestPatches = manifest.files.map(f => f.patch).sort();
@@ -98,7 +100,7 @@ test('createExtensionStarter wires all 2bb5e41 extension boundaries cleanly', as
     else process.env.ROKBOT_DATA_DIR = prevDataDir;
   });
 
-  const registryIds = ['auth', 'team-admin-policy', 'orbit', 'identity-socket', 'user-skills-cache', 'memory', 'settings', 'telemetry', 'inference', 'turn-execution', 'local-exec', 'transcript', 'agent-identity', 'auto-review', 'automations'];
+  const registryIds = ['auth', 'desktop-telemetry', 'team-admin-policy', 'orbit', 'identity-socket', 'user-skills-cache', 'memory', 'settings', 'telemetry', 'inference', 'turn-execution', 'local-exec', 'transcript', 'agent-identity', 'auto-review', 'automations'];
   const fakeLibrary = {
     getSandRootDir: () => dataDir,
     ConnectError: class ConnectError extends Error {},
@@ -202,7 +204,7 @@ test('createExtensionStarter wires all 2bb5e41 extension boundaries cleanly', as
     assert.equal(typeof teamPolicy[method], 'function', `team-admin-policy missing ${method}`);
   }
 
-  for (const extId of ['orbit', 'identity-socket', 'user-skills-cache']) {
+  for (const extId of ['desktop-telemetry', 'orbit', 'identity-socket', 'user-skills-cache']) {
     const extApi = started.api(extId);
     assert.ok(extApi && typeof extApi === 'object', `expected ${extId} replacement object`);
   }
@@ -709,7 +711,7 @@ if (configuredSeed || configuredArchive) {
     try {
       await host.start();
       const exts = host.requireHostExtensions();
-      assert.equal(exts.order.length, 49);
+      assert.equal(exts.order.length, 50);
 
       const api = host.getApi();
       const events = [];

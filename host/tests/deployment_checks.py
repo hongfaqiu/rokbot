@@ -267,13 +267,13 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('COPY web/ web-bundle/', dockerfile)
         self.assertIn('dev.rokbot.web-bundle-sha256=${WEB_BUNDLE_SHA256}', dockerfile)
 
-    def test_2bb5e41_release_containers_and_healthcheck_timeout(self):
+    def test_97658ad_release_containers_and_healthcheck_timeout(self):
         manifest = json.loads((HOST / 'recipes/host/manifest.json').read_text(encoding='utf-8'))
-        self.assertEqual(manifest['archive']['version'], '2bb5e41')
-        self.assertEqual(manifest['box']['localTag'], 'rokbot-box-input:2bb5e41')
+        self.assertEqual(manifest['archive']['version'], '97658ad')
+        self.assertEqual(manifest['box']['localTag'], 'rokbot-box-input:97658ad')
         self.assertIn('sand-eval-runner.cjs', manifest['sourceSha256'])
         dockerfile = (HOST / 'release/Dockerfile.host').read_text(encoding='utf-8')
-        self.assertIn('ARG RUNTIME_IMAGE=rokbot-box-input:2bb5e41', dockerfile)
+        self.assertIn('ARG RUNTIME_IMAGE=rokbot-box-input:97658ad', dockerfile)
         self.assertIn('ROKBOT_ALLOW_DEVICE_MODEL_CONFIG=1', dockerfile)
         self.assertIn('ROKBOT_UPDATE_DIR=/data/updates', dockerfile)
         self.assertIn('--timeout=15s', dockerfile)
@@ -284,7 +284,7 @@ class DeploymentTests(unittest.TestCase):
             self.assertIn('timeout: 15s', text, rel)
         for rel in ('release/compose.yaml', 'release/compose.execution.yaml'):
             text = (HOST / rel).read_text(encoding='utf-8')
-            self.assertIn('rokbot-box-input:2bb5e41', text, rel)
+            self.assertIn('rokbot-box-input:97658ad', text, rel)
 
 
 class ComposeMountTests(unittest.TestCase):

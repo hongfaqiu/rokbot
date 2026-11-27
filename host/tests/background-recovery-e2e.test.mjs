@@ -78,9 +78,11 @@ async function realHostHarness(t, { env: extraEnv = {} } = {}) {
       say(res, 'Done.');
       return;
     }
-    // A subagent conversation starts from the Task prompt; the parent's history always holds DISPATCH_.
-    const isParent = users.some((text) => /DISPATCH_(OK|FAIL|HANG|SLOW)/.test(text));
-    const subTask = isParent ? undefined : users.find((text) => /SUBTASK_(OK|FAIL|HANG|SLOW)/.test(text));
+    // A subagent conversation runs as the executor subagent (in 97658ad its prompt may also quote
+    // <parent_conversation> containing DISPATCH_, so check the system prompt / <user_query> rather than raw users).
+    const isSubagent = system.includes('running as the executor subagent')
+      || users.some((text) => /<user_query>\s*SUBTASK_(OK|FAIL|HANG|SLOW)/.test(text));
+    const subTask = isSubagent ? users.find((text) => /SUBTASK_(OK|FAIL|HANG|SLOW)/.test(text)) : undefined;
     if (subTask) {
       subagentPrompts.push(subTask);
       if (subTask.includes('SUBTASK_FAIL')) {

@@ -103,7 +103,7 @@ test('static Compose and .env.images.example schema match RokBot prebuilt image 
   assert.match(compose, /^name:\s*rokbot\b/m);
   assert.match(compose, /x-proxy-environment:\s*&proxy-environment/);
   assert.ok(compose.includes('ghcr.io/hongfaqiu/rokbot/host:latest'));
-  assert.ok(compose.includes('ghcr.io/hongfaqiu/rokbot/box:2bb5e41'));
+  assert.ok(compose.includes('ghcr.io/hongfaqiu/rokbot/box:97658ad'));
   assert.match(compose, /platform:\s*linux\/amd64/);
   assert.match(compose, /no-new-privileges:true/);
   assert.match(compose, /cap_drop:\s*\n\s*-\s*ALL/);
@@ -130,7 +130,7 @@ test('static Compose and .env.images.example schema match RokBot prebuilt image 
   assert.match(envExample, /^ROKBOT_LISTEN_ADDRESS=127\.0\.0\.1$/m);
   assert.match(envExample, /^ROKBOT_PUBLIC_PORT=18080$/m);
   assert.match(envExample, /^ROKBOT_HOST_IMAGE=ghcr\.io\/hongfaqiu\/rokbot\/host:latest$/m);
-  assert.match(envExample, /^ROKBOT_BOX_IMAGE=ghcr\.io\/hongfaqiu\/rokbot\/box:2bb5e41$/m);
+  assert.match(envExample, /^ROKBOT_BOX_IMAGE=ghcr\.io\/hongfaqiu\/rokbot\/box:97658ad$/m);
   assert.match(envExample, /^ROKBOT_ALLOW_DEVICE_MODEL_CONFIG=1$/m);
   assert.match(envExample, /^ROKBOT_UPDATE_DIR=\/data\/updates$/m);
   assert.match(envExample, /^ROKBOT_BOX_TOKEN=local$/m);
@@ -175,7 +175,7 @@ test('real docker compose validates docker-compose.images.yml and resolves defau
   assert.equal(resolvedRes.status, 0, resolvedRes.stdout + resolvedRes.stderr);
   const out = resolvedRes.stdout;
   assert.ok(out.includes('ghcr.io/hongfaqiu/rokbot/host:latest'));
-  assert.ok(out.includes('ghcr.io/hongfaqiu/rokbot/box:2bb5e41'));
+  assert.ok(out.includes('ghcr.io/hongfaqiu/rokbot/box:97658ad'));
   assert.ok(out.includes('published: "18080"'));
   assert.ok(out.includes('target: 8000'));
   assert.ok(out.includes('ROKBOT_ALLOW_DEVICE_MODEL_CONFIG: "1"'));
