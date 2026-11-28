@@ -13,10 +13,14 @@
 static NSString *const RBTranscribePath = @"/aiserver.v1.AiService/TranscribeAudio";
 // Voice-memo playback: { text, voiceId } -> { audio: base64, mimeType }, answered by the Host.
 static NSString *const RBTextToSpeechPath = @"/aiserver.v1.AiService/TextToSpeech";
+// Bot avatar page > Generate: { description, modelId, maxMode, aspectRatio } ->
+// { success: { imageData, mimeType } } | { error: { error } }, answered by the Host image model.
+static NSString *const RBAvatarImagePath = @"/aiserver.v1.AiService/RunGenerateImage";
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
   return [request.HTTPMethod isEqual:@"POST"] &&
-    ([request.URL.path isEqual:RBTranscribePath] || [request.URL.path isEqual:RBTextToSpeechPath]);
+    ([request.URL.path isEqual:RBTranscribePath] || [request.URL.path isEqual:RBTextToSpeechPath] ||
+     [request.URL.path isEqual:RBAvatarImagePath]);
 }
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
 - (void)fail:(NSString *)message code:(NSInteger)code {
@@ -31,7 +35,9 @@ static NSString *const RBTextToSpeechPath = @"/aiserver.v1.AiService/TextToSpeec
     [self fail:RBL(@"请先连接 Host。", @"Connect to Host first.") code:401]; return;
   }
   BOOL speech = [self.request.URL.path isEqual:RBTextToSpeechPath];
+  BOOL avatar = [self.request.URL.path isEqual:RBAvatarImagePath];
   NSUInteger limit = speech ? 64 * 1024 : 36 * 1024 * 1024;
+  if (avatar) limit = 128 * 1024;
   NSData *body = self.request.HTTPBody;
   if (!body && self.request.HTTPBodyStream) {
     NSInputStream *stream = self.request.HTTPBodyStream;
@@ -41,7 +47,8 @@ static NSString *const RBTextToSpeechPath = @"/aiserver.v1.AiService/TextToSpeec
     while ((count = [stream read:buffer maxLength:sizeof(buffer)]) > 0) {
       if (collected.length + count > limit) {
         [stream close];
-        [self fail:speech ? RBL(@"消息过长，无法朗读。", @"The message is too long to read aloud.")
+        [self fail:avatar ? RBL(@"头像描述过长。", @"The avatar description is too long.")
+                   : speech ? RBL(@"消息过长，无法朗读。", @"The message is too long to read aloud.")
                           : RBL(@"录音文件过大。", @"The recording is too large.") code:413]; return;
       }
       [collected appendBytes:buffer length:count];
@@ -53,7 +60,16 @@ static NSString *const RBTextToSpeechPath = @"/aiserver.v1.AiService/TextToSpeec
   if (body.length > limit) { [self fail:RBL(@"请求过大。", @"The request is too large.") code:413]; return; }
   id parsed = body ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : nil;
   NSMutableDictionary *payload = [parsed isKindOfClass:NSDictionary.class] ? [NSMutableDictionary dictionaryWithDictionary:parsed] : nil;
-  if (speech) {
+  if (avatar) {
+    NSString *description = [payload[@"description"] isKindOfClass:NSString.class] ? payload[@"description"] : nil;
+    if (![description stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) {
+      [self fail:RBL(@"请填写头像描述。", @"Describe the avatar first.") code:400]; return;
+    }
+    // The official modelId names a cloud model; the Host uses its own default image model.
+    NSMutableDictionary *reduced = [NSMutableDictionary dictionaryWithObject:description forKey:@"description"];
+    if ([payload[@"aspectRatio"] isKindOfClass:NSString.class]) reduced[@"aspectRatio"] = payload[@"aspectRatio"];
+    payload = reduced;
+  } else if (speech) {
     if (![payload[@"text"] isKindOfClass:NSString.class]) {
       [self fail:RBL(@"无法朗读这条消息。", @"Could not read this message aloud.") code:400]; return;
     }
@@ -63,7 +79,7 @@ static NSString *const RBTextToSpeechPath = @"/aiserver.v1.AiService/TextToSpeec
     }
     payload[@"audioBase64"] = payload[@"audio"]; [payload removeObjectForKey:@"audio"];
   }
-  NSString *hostPath = speech ? @"/local/audio/speech" : @"/local/audio/transcriptions";
+  NSString *hostPath = avatar ? @"/local/avatar/generate" : speech ? @"/local/audio/speech" : @"/local/audio/transcriptions";
   NSURL *targetURL = [NSURL URLWithString:[serverURL stringByAppendingString:hostPath]];
   if (!targetURL) {
     [self fail:RBL(@"无法连接 Host。", @"Could not connect to Host.") code:400]; return;
@@ -72,9 +88,10 @@ static NSString *const RBTextToSpeechPath = @"/aiserver.v1.AiService/TextToSpeec
   request.HTTPMethod = @"POST";
   request.allHTTPHeaderFields = @{@"Content-Type":@"application/json", @"Accept":@"application/json",
     @"Authorization":[@"Bearer " stringByAppendingString:deviceToken]};
-  request.timeoutInterval = 125;
+  request.timeoutInterval = avatar ? 200 : 125;
   request.HTTPBody = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  if (speech) RBDiagnosticsEvent(@"speech.synthesis.request", @{@"bytes":@(body.length)});
+  if (avatar) RBDiagnosticsEvent(@"avatar.generate.request", @{@"bytes":@(body.length)});
+  else if (speech) RBDiagnosticsEvent(@"speech.synthesis.request", @{@"bytes":@(body.length)});
   else RBDiagnosticsEvent(@"speech.request", @{@"mimeType":payload[@"mimeType"] ?: @"", @"bytes":@(body.length)});
   self.task = [RBHTTPSession() dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
     if (self.cancelled) return;
