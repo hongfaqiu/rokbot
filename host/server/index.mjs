@@ -18,6 +18,7 @@ import { listFishVoices } from './voice-catalog.mjs';
 import { Voice } from './voice.mjs';
 import { pcmWav } from './voice-audio.mjs';
 import { AudioSpeech, SPEECH_RPC_PATH } from './audio-speech.mjs';
+import { AvatarImage, AVATAR_IMAGE_LOCAL_PATH, AVATAR_IMAGE_RPC_PATH } from './avatar-image.mjs';
 import { HarnessSettings } from './harness-settings.mjs';
 import { Skills } from './skills.mjs';
 import { ExecutionNode } from './execution-node.mjs';
@@ -237,6 +238,7 @@ export async function createSelfHostServer(options = {}) {
   const audioSpeech = new AudioSpeech({ synthesis, env: options.speechEnv ?? process.env });
   const mediaSettings = await new MediaSettings(dataDir).load(), webSettings = await new WebSettings(dataDir).load();
   const mediaServices = await new MediaServices(dataDir).load(), webServices = new WebServices(dataDir);
+  const avatarImage = new AvatarImage({ media: mediaServices });
   const harness = await new HarnessSettings(dataDir).load();
   const prompts = await new PromptSettings(dataDir).load();
   const skills = await new Skills(dataDir, { hostDataDir }).load();
@@ -986,6 +988,14 @@ export async function createSelfHostServer(options = {}) {
       connections.track(found.id, response);
       return audioSpeech.route(request, response, { json: path === SPEECH_RPC_PATH,
         resolveAgent: agentId => verifyAgent(agentId, { includeProfile: true }) });
+    }
+    if (path === AVATAR_IMAGE_LOCAL_PATH || path === AVATAR_IMAGE_RPC_PATH) {
+      // Bot avatar page > Generate. The RPC path also answers clients whose interceptor forwards
+      // /aiserver.v1.AiService/RunGenerateImage unchanged (before this route it was a silent 404).
+      const found = device(request, web);
+      limiter.check(`avatar-image:${found.id}`, 10);
+      connections.track(found.id, response);
+      return avatarImage.route(request, response);
     }
     if (request.method === 'POST' && path === '/local/voice/session') {
       const found = device(request, web); limiter.check(`voice-session:${found.id}`, 10);
