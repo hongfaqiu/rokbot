@@ -153,7 +153,10 @@ async function realHostHarness(t) {
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const system = messages.filter((m) => m?.role === 'system').map(textOf).join('\n');
     // The harness may append its own <system_reminder> user turns; the prompt is the last other one.
-    const lastUser = [...messages].reverse().find((m) => m?.role === 'user' && !textOf(m).trimStart().startsWith('<system_reminder>'));
+    // A reminder can also be prepended to the prompt itself (e.g. a tool-catalog update when the
+    // tool set changed since the last turn); that message still carries the <user_query>.
+    const reminderOnly = (m) => { const t = textOf(m).trimStart(); return t.startsWith('<system_reminder>') && !t.includes('<user_query>'); };
+    const lastUser = [...messages].reverse().find((m) => m?.role === 'user' && !reminderOnly(m));
     const results = messages.slice(messages.lastIndexOf(lastUser) + 1).filter((m) => m?.role === 'tool').map(textOf);
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     if (system.includes('GROK_BOT_MEMORY_EXTRACTION')) { say(res, 'Done.'); return; }
