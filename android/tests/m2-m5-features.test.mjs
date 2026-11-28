@@ -2942,7 +2942,10 @@ test(
       'Official grok-bot-1.26.0.xapk not found; set ROKBOT_ANDROID_TEST_XAPK or place in inputs/android/',
   },
   () => {
-  const realMeta = loadGatewayTemplateMetadata();
+  // Track A is a pinned 1.26.0 (3212) HBC regression: every byte offset, function id and string
+  // id below is specific to the 1.26.0 bundle it patches, so load that bundle's recipe explicitly
+  // rather than the version-default, which now resolves to 1.27.0 (3283) via manifest.build.
+  const realMeta = loadGatewayTemplateMetadata(path.join(NATIVE_ROOT, 'recipes/gateway-template.json'));
   assert.equal(realMeta.bodyOffset, 38303476);
   assert.equal(realMeta.bodyCapacity, 24600);
   assert.equal(realMeta.bodyLengthOffset, 38328844);
