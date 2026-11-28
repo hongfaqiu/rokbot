@@ -14,7 +14,7 @@ const NATIVE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const SOURCE_DIR = path.join(NATIVE_ROOT, 'companion/src/main/java/dev/rokbot/nativeapp');
 const RPC = '/aiserver.v1.AiService/TextToSpeech';
 
-for (const name of ['R8OkHttpInterceptor126.java', 'R8OkHttpInterceptor.java', 'NetworkInterceptor.java']) {
+for (const name of ['R8OkHttpInterceptor127.java', 'R8OkHttpInterceptor126.java', 'R8OkHttpInterceptor.java', 'NetworkInterceptor.java']) {
   test(`${name} forwards TextToSpeech to the Host like TranscribeAudio`, () => {
     const source = fs.readFileSync(path.join(SOURCE_DIR, name), 'utf8');
     assert.match(source, /boolean isTextToSpeech = "POST"\.equals\(httpMethod\)\s*&& GatewayEndpointRouter\.TEXT_TO_SPEECH_RPC\.equals\(path\);/);
