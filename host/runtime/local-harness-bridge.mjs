@@ -417,6 +417,46 @@ function createLocalToolPermissionAdapter(localToolPermissionExt) {
   };
 }
 
+/**
+ * Plain assistant text a finished user turn left undelivered. With no delivery at all the
+ * whole streamed text is the answer (original behaviour). After an earlier SendToUser only
+ * the final plain-text step counts (issue #14): turn-settle reports it as
+ * `trailingAssistantText`, so text from steps before the progress send is never re-posted.
+ */
+export function undeliveredFinalText(result) {
+  if (!result || typeof result !== 'object') return '';
+  if ((result.sentMessageCount ?? 0) === 0) {
+    if (result.reacted) return '';
+    return typeof result.text === 'string' ? result.text.trim() : '';
+  }
+  return typeof result.trailingAssistantText === 'string' ? result.trailingAssistantText.trim() : '';
+}
+
+function normalizeDeliveredText(text) {
+  return typeof text === 'string' ? text.replace(/\s+/g, ' ').trim() : '';
+}
+
+function sendMessageEntryText(entry) {
+  const message = entry?.message;
+  if (typeof message === 'string') return message;
+  if (!message || typeof message !== 'object') return '';
+  if (typeof message.content === 'string') return message.content;
+  if (typeof message.text === 'string') return message.text;
+  return '';
+}
+
+/** True when a send-message persisted during this turn already carries `text`. */
+export function alreadySentThisTurn(entries, entryIdsBeforeRun, text) {
+  const wanted = normalizeDeliveredText(text);
+  if (!wanted) return true;
+  for (const entry of entries ?? []) {
+    if (entry?.kind !== 'send-message' || entryIdsBeforeRun?.has(entry.id)) continue;
+    const sent = normalizeDeliveredText(sendMessageEntryText(entry));
+    if (sent && (sent === wanted || sent.includes(wanted))) return true;
+  }
+  return false;
+}
+
 function persistTranscriptEntry(tm, session, entry) {
   const agentId = session.id;
   if (tm.sessions?.activeSession?.id === agentId && typeof tm.sessions?.appendEntry === 'function') {
@@ -1218,6 +1258,7 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
           let turnResult;
           const runTurn = async () => {
             this.tm.runLifecycle?.beginSessionRun?.(session);
+            const entryIdsBeforeRun = new Set(readSessionTranscriptEntries(this.tm, session).map((e) => e?.id));
             try {
               const result = await runner.run(prompt, {
                 ...options,
@@ -1228,21 +1269,20 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
                 requestSource: options.requestSource ?? 'turn',
               }, scope);
               turnResult = result;
-              if (
-                !options.hidden &&
+              const fallbackText = !options.hidden &&
                 !result?.aborted &&
                 !result?.pausedForUpgrade &&
-                !result?.awaitingUserSelection &&
-                (result?.sentMessageCount ?? 0) === 0 &&
-                !result?.reacted &&
-                typeof result?.text === 'string' &&
-                result.text.trim().length > 0
-              ) {
+                !result?.awaitingUserSelection
+                ? undeliveredFinalText(result)
+                : '';
+              if (fallbackText) {
                 const entries = readSessionTranscriptEntries(this.tm, session);
-                const storedIds = readSessionStoredIds(session);
-                const sendId = nextEntryId(entries, 'send-message', storedIds);
-                const fallbackEntry = createSendMessageEntry(sendId, { type: 'text', content: result.text.trim() }, Date.now());
-                persistTranscriptEntry(this.tm, session, fallbackEntry);
+                if (!alreadySentThisTurn(entries, entryIdsBeforeRun, fallbackText)) {
+                  const storedIds = readSessionStoredIds(session);
+                  const sendId = nextEntryId(entries, 'send-message', storedIds);
+                  const fallbackEntry = createSendMessageEntry(sendId, { type: 'text', content: fallbackText }, Date.now());
+                  persistTranscriptEntry(this.tm, session, fallbackEntry);
+                }
               }
               if (nonce) {
                 session.db?.writeKv?.('lastTurnSettlement', JSON.stringify({
