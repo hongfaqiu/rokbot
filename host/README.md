@@ -79,6 +79,7 @@ docker compose -f release/compose.execution.yaml up -d --build
 
 - 局域网访问：设置 `ROKBOT_NODE_LISTEN_ADDRESS=0.0.0.0`，端口默认 18443。
 - 内嵌网络：设置 `ROKBOT_TAILCAT_ENABLED=1`；高级选项是 `ROKBOT_TAILCAT_RELAY` 和 `ROKBOT_TAILCAT_DERP_MAP_URL`。
+- macOS 宿主机想绕开容器 UDP 的对称 NAT、把 Tailcat 放到本机 launchd 运行：见 [deploy/tailcat-native/](deploy/tailcat-native/README.md)。
 
 <a id="capacity-benchmark"></a>
 ## 整机基准

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 测试用模板（独立 Label、独立 state 目录 test/state、独立日志）。由 tools/install-test-job.sh 生成。
+     不要在正式节点还跑着的时候加载：同机只能有一个本机 tailcat 节点。 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>__LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__TAILCAT_DIR__/runner.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TAILCAT_DIR</key><string>__TAILCAT_DIR__</string>
+    <key>TAILCAT_TARGET</key><string>__TAILCAT_TARGET__</string>
+    <key>TAILCAT_STATE</key><string>test/state</string>
+    <key>TAILCAT_PORT</key><string>__TAILCAT_PORT__</string>
+  </dict>
+  <key>WorkingDirectory</key><string>__TAILCAT_DIR__</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>Umask</key><integer>63</integer>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>__TAILCAT_DIR__/test/launchd-test.log</string>
+  <key>StandardErrorPath</key><string>__TAILCAT_DIR__/test/launchd-test.log</string>
+</dict>
+</plist>
