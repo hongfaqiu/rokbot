@@ -329,6 +329,32 @@ public final class GatewayEndpointRouter {
         }
     }
 
+    /**
+     * Bot avatar page > Generate: { description, modelId, maxMode, aspectRatio } ->
+     * { success: { imageData: base64, mimeType } } | { error: { error } } (Host /local/avatar/generate).
+     */
+    public static final String AVATAR_IMAGE_RPC = "/aiserver.v1.AiService/RunGenerateImage";
+
+    /**
+     * Keeps the prompt and aspect ratio only: the official modelId names a cloud model, and the
+     * Host generates with its own default image model.
+     */
+    public static byte[] normalizeAvatarImageBody(byte[] raw) {
+        if (raw == null || raw.length == 0) return null;
+        try {
+            org.json.JSONObject input = new org.json.JSONObject(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
+            Object description = input.opt("description");
+            if (!(description instanceof String) || ((String) description).trim().isEmpty()) return null;
+            org.json.JSONObject output = new org.json.JSONObject();
+            output.put("description", description);
+            Object aspectRatio = input.opt("aspectRatio");
+            if (aspectRatio instanceof String && !((String) aspectRatio).isEmpty()) output.put("aspectRatio", aspectRatio);
+            return output.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     public static String rewriteRpcPath(String path) {
         if (path == null) return null;
         if ("/aiserver.v1.GrokBotService/MintSandVoiceCallSecret".equals(path)) {
@@ -339,6 +365,9 @@ public final class GatewayEndpointRouter {
         }
         if (TEXT_TO_SPEECH_RPC.equals(path)) {
             return "/local/audio/speech";
+        }
+        if (AVATAR_IMAGE_RPC.equals(path)) {
+            return "/local/avatar/generate";
         }
         String appIntentMethod = getAppIntentMethod(path);
         if (appIntentMethod != null) {

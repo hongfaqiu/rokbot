@@ -19,7 +19,8 @@ for (const name of ['R8OkHttpInterceptor127.java', 'R8OkHttpInterceptor126.java'
     const source = fs.readFileSync(path.join(SOURCE_DIR, name), 'utf8');
     assert.match(source, /boolean isTextToSpeech = "POST"\.equals\(httpMethod\)\s*&& GatewayEndpointRouter\.TEXT_TO_SPEECH_RPC\.equals\(path\);/);
     // Unpaired: answered on the device, never sent to the cloud.
-    assert.equal(source.split('(isVoiceMint || isTranscribe || isTextToSpeech || isAppIntent || isDashboard)').length - 1, 2,
+    const flags = source.match(/\(isVoiceMint \|\| [^)]*\)/g) ?? [];
+    assert.equal(flags.filter(list => list.includes('isTextToSpeech')).length, 2,
       'token check and no-Host fallback both cover TextToSpeech');
     const branch = source.indexOf('} else if (isTextToSpeech) {');
     assert.ok(branch > 0, 'rewrites the request body');
