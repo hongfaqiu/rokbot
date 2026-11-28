@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withLocalLibraryRunner } from './host-library-files.mjs';
+import { captureGroupSend, installLocalGroupTurns, isLocalGroupRoom } from './local-group-turns.mjs';
 import { BackgroundRecovery, pendingWakeFilePath, resolveBackgroundRecoveryConfig } from './background-recovery.mjs';
 import { AUTO_REVIEW_AWAITING_TAB_ID, autoReviewModesFor, rokbotCardText } from './host-auto-review.mjs';
 import {
@@ -651,6 +652,8 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
   let lastSentMessageId = null;
   let lastReactionApplied = false;
   let activeRequestId = null;
+  // Set while this Bot takes a turn in a local group (local-group-turns.mjs).
+  let groupTurn = null;
 
   const recordRequestId = (requestId) => {
     if (typeof requestId !== 'string' || !requestId) return;
@@ -693,6 +696,12 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
         return;
       }
       if (update.type === 'send-message' && update.message) {
+        const routed = groupTurn ? captureGroupSend(update) : null;
+        if (routed?.route === 'room') {
+          // A group reply: the room posts it with this Bot as author; the 1:1 chat does not get it.
+          groupTurn.onRoomPost(update.message);
+          return undefined;
+        }
         const entries = readSessionTranscriptEntries(tm, session);
         const storedIds = readSessionStoredIds(session);
         const sendId = nextEntryId(entries, 'send-message', storedIds);
@@ -710,6 +719,8 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
         persistTranscriptEntry(tm, session, entry);
         lastSentMessageId = sendId;
         emitGatewayEvent?.({ type: 'transcript', agentId, update });
+        // A card raised in a group turn stays in this 1:1 chat; the room only gets a notice.
+        if (routed?.approval) groupTurn.onApproval(update.message);
         return sendId;
       }
       if (update.type === 'react-to-message') {
@@ -924,7 +935,48 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
     transport,
   });
   tm.rokbotBackgroundRecovery?.attachRunner(runner, agentId);
+  runner.rokbotBeginGroupTurn = (capture) => {
+    groupTurn = capture;
+    return () => { if (groupTurn === capture) groupTurn = null; };
+  };
   return runner;
+}
+
+/**
+ * Run one member's hidden turn in a local group on that member's own runner, serialized with
+ * its other runs. Room posts and cards are routed through `capture` (local-group-turns.mjs).
+ */
+export async function runLocalGroupMemberOnRunner(tm, runtimeCtx, memberId, prompt, capture) {
+  return await withBackgroundSessionLease(tm.sessions, memberId, async (session) => {
+    const runner = tm.ensureRunnerRegistry(runtimeCtx).getRunner(session);
+    if (typeof runner.rokbotBeginGroupTurn !== 'function') throw new Error('runner cannot take a group turn');
+    let result;
+    let cancelled = false;
+    const task = async () => {
+      tm.runLifecycle?.beginSessionRun?.(session);
+      const end = runner.rokbotBeginGroupTurn(capture);
+      try {
+        result = await runner.run(prompt, {
+          hidden: true,
+          isSilenceAllowed: true,
+          isGroupMemberTurn: true,
+          autoReviewEpoch: 'continue',
+        }, { kind: 'all' });
+      } finally {
+        end();
+        tm.runLifecycle?.endSessionRun?.(session);
+        await tm.roster?.emitAgentUpdate?.(memberId);
+      }
+    };
+    if (tm.runLifecycle?.enqueueExclusiveRun) {
+      await tm.runLifecycle.enqueueExclusiveRun(memberId, task, {
+        lane: 'background', source: 'group-member', onCancelled: () => { cancelled = true; },
+      });
+    } else {
+      await task();
+    }
+    return { result, cancelled };
+  });
 }
 
 /**
@@ -1394,6 +1446,10 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
 
           const { replyToId, replyContext } = resolveSendReplyContext(
             replyFields, readSessionTranscriptEntries(this.tm, session));
+          const isGroupRoom = isLocalGroupRoom(this.tm, session);
+          // The room's delivery record treats everything already in history as seen, so it must
+          // exist before this user line is appended (as GroupChatGlue#postToGroupWithStatus does).
+          if (isGroupRoom) this.tm.groupChat.deliveryFor?.(session);
 
           const attachmentsExt = extensions?.('attachments');
           const hasRemoteBox = Boolean(extensions?.('forever-box')?.box);
@@ -1448,6 +1504,37 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
               timestampMs: Date.now(),
               ...(nonce ? { clientNonce: nonce } : {}),
             });
+          }
+
+          if (isGroupRoom) {
+            // A local group is a room, not a Bot: its members take their own turns (local-group-turns.mjs).
+            const runRoom = async () => {
+              this.tm.runLifecycle?.beginSessionRun?.(session);
+              try {
+                // runGroupTurn reports its own failures to the tray and ends the session run.
+                await this.tm.groupChat.runGroupTurn(session, epoch, {
+                  lane: 'user',
+                  ...(trimmed.length === 0 && attachmentPaths.length > 0 ? { isAttachmentOnlyTurn: true } : {}),
+                });
+              } finally {
+                if (nonce) {
+                  session.db?.writeKv?.('lastTurnSettlement', JSON.stringify({ clientNonce: nonce, outcome: 'success', settledAtMs: Date.now() }));
+                }
+                await this.tm.roster?.emitAgentUpdate?.(agentId);
+              }
+            };
+            const roomRun = Promise.resolve(
+              this.tm.runLifecycle?.enqueueExclusiveRun
+                ? this.tm.runLifecycle.enqueueExclusiveRun(agentId, runRoom, { lane: 'user', source: 'group' })
+                : runRoom(),
+            ).finally(() => { leased?.[Symbol.dispose]?.(); });
+            leaseTransferred = true;
+            if (options.awaitTurn === false) {
+              void roomRun.catch((err) => { this.tm.hostLog?.(`group turn failed: ${err?.message ?? err}`, 'error'); });
+              return;
+            }
+            await roomRun;
+            return undefined;
           }
 
           if (typeof runner.interrupt === 'function') {
@@ -1595,6 +1682,12 @@ export function decorateHostExtensionsFor2bb5e41(extension, api, { context, libr
       extensions: (id) => apis.get(id),
       isInferenceReady: getInferenceReady,
     });
+    if (api.groupChat) {
+      installLocalGroupTurns(Object.getPrototypeOf(api.groupChat)?.constructor, {
+        runMember: (tm, memberId, prompt, capture) => runLocalGroupMemberOnRunner(
+          tm, { extensions: (id) => apis.get(id) }, memberId, prompt, capture),
+      });
+    }
     if ((process.env.ROKBOT_BACKGROUND_RECOVERY ?? '1') !== '0') {
       const recovery = installBackgroundRecovery(api, { library, extensions: (id) => apis.get(id) });
       if (recovery) {
