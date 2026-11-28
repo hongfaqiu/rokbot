@@ -962,6 +962,85 @@ export async function runBackgroundWake(tm, runtimeCtx, agentId, prompt, { sourc
   });
 }
 
+const USER_FORM_RESUME_WRAPPED = Symbol('rokbot.userFormResumeWrapped');
+
+/**
+ * Resume a local 1:1 bot after the user submits or dismisses its RequestUserForm card (T-58).
+ *
+ * The 2bb5e41 kernel's UserFormResponses.submitUserForm / dismissUserForm fill the box browser,
+ * stamp `formResolution` on the card and then call `wakeFormAuthor(located, receipt)`, which only
+ * wakes group members (`memberAgentId == null` returns early). Upstream a 1:1 bot was server-hosted
+ * and the server resumed it; RokBot runs it locally, so nothing ever resumed the turn. This runs
+ * the kernel's own receipt as a hidden prompt in the bot's user lane. Submitted values never enter
+ * the prompt (the receipt is status-only by construction).
+ *
+ * The resume is not awaited: the card's resolution stamp is already emitted by then, and blocking
+ * the client's submitUserForm / dismissUserForm call for a whole bot turn would let mobile clients
+ * time out and report a submit failure that did not happen. The local userForm port has no remap
+ * write path (see createLocalUserFormPort), so nothing relies on the kernel's remap hold lasting
+ * through the woken turn.
+ */
+export function installLocalUserFormResume(tm, runtimeCtx, { library } = {}) {
+  const hostFlowBindings = library?.getHostFlowRecoveryBindings?.() ?? {};
+  const entries = {
+    nextEntryId: hostFlowBindings.nextEntryId ?? fallbackNextEntryId,
+    createSendMessageEntry: hostFlowBindings.createSendMessageEntry ?? fallbackCreateSendMessageEntry,
+  };
+  const responses = tm?.userFormResponses;
+  if (!responses || typeof responses.wakeFormAuthor !== 'function') return false;
+  if (responses.wakeFormAuthor[USER_FORM_RESUME_WRAPPED]) return true;
+  const original = responses.wakeFormAuthor.bind(responses);
+  const wrapped = async (located, prompt) => {
+    if (located?.memberAgentId != null) return await original(located, prompt);
+    const agentId = located?.session?.id;
+    if (typeof agentId !== 'string' || !agentId || typeof prompt !== 'string' || !prompt.trim()) return;
+    if (tm.sessions?.isServerHostedAgent?.(agentId)) return await original(located, prompt);
+    void runUserFormResumeTurn(tm, runtimeCtx, agentId, prompt, entries).catch((error) => {
+      tm.hostLog?.(`user form resume turn failed: ${error?.message ?? error}`, 'error');
+    });
+  };
+  wrapped[USER_FORM_RESUME_WRAPPED] = true;
+  responses.wakeFormAuthor = wrapped;
+  return true;
+}
+
+async function runUserFormResumeTurn(tm, runtimeCtx, agentId, prompt, { nextEntryId, createSendMessageEntry }) {
+  return await withBackgroundSessionLease(tm.sessions, agentId, async (session) => {
+    const runner = tm.ensureRunnerRegistry(runtimeCtx).getRunner(session);
+    const task = async () => {
+      tm.runLifecycle?.beginSessionRun?.(session);
+      session.db?.setAwaitingUserResponse?.(null);
+      const entryIdsBeforeRun = new Set(readSessionTranscriptEntries(tm, session).map((e) => e?.id));
+      try {
+        const result = await runner.run(prompt, {
+          hidden: true,
+          agentId,
+          requestSource: 'user-form',
+        }, { kind: 'all' });
+        // The user is waiting on this turn, so a plain-text answer must still reach the chat.
+        const fallbackText = !result?.aborted && !result?.pausedForUpgrade && !result?.awaitingUserSelection
+          ? undeliveredFinalText(result)
+          : '';
+        if (fallbackText) {
+          const entries = readSessionTranscriptEntries(tm, session);
+          if (!alreadySentThisTurn(entries, entryIdsBeforeRun, fallbackText)) {
+            const sendId = nextEntryId(entries, 'send-message', readSessionStoredIds(session));
+            persistTranscriptEntry(tm, session, createSendMessageEntry(sendId, { type: 'text', content: fallbackText }, Date.now()));
+          }
+        }
+        return result;
+      } finally {
+        tm.runLifecycle?.endSessionRun?.(session);
+        await tm.roster?.emitAgentUpdate?.(agentId);
+      }
+    };
+    if (tm.runLifecycle?.enqueueExclusiveRun) {
+      return await tm.runLifecycle.enqueueExclusiveRun(agentId, task, { lane: 'user', source: 'user-form' });
+    }
+    return await task();
+  });
+}
+
 const DEFERRED_RETIRE_POLL_MS = 5_000;
 const deferredRetirements = new WeakMap();
 
@@ -1609,6 +1688,7 @@ export function decorateHostExtensionsFor2bb5e41(extension, api, { context, libr
     if (typeof api.runServerAutomationForEvent !== 'function' && api.automationRuntime?.runServerAutomationForEvent) {
       api.runServerAutomationForEvent = (...args) => api.automationRuntime.runServerAutomationForEvent(...args);
     }
+    installLocalUserFormResume(api, { extensions: (id) => apis.get(id) }, { library });
     if (api.widgetResponses && typeof api.widgetResponses.respondToWidget === 'function' && !api.widgetResponses.respondToWidget.__rokbotResourceRemoval) {
       const origRespondToWidget = api.widgetResponses.respondToWidget.bind(api.widgetResponses);
       const wrappedRespondToWidget = async (entryId, value, agentId) => {

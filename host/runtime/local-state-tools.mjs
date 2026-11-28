@@ -1394,7 +1394,13 @@ export function createLocalBoxHandoffPort({ sessionExt }) {
   };
 }
 
-/** Local `userForm` port backed by the host's built-in UserFormService (extensions('session')). */
+/**
+ * Local `userForm` port. Showing a form needs no registration: the kernel's UserFormResponses
+ * finds the pending card by its transcript entry (formRequestId), fills through the session
+ * UserFormService (fillUserForm) and, for 1:1 bots, installLocalUserFormResume resumes the turn.
+ * There is no local remap write path (the session extension exposes no way to re-write a held
+ * value), so remapTargets always answers no_hold and the tool tells the model to re-ask.
+ */
 export function createLocalUserFormPort({ sessionExt }) {
   if (!sessionExt) return undefined;
   const activeRemaps = new Set();
