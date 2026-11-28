@@ -94,6 +94,21 @@ class RequiredPairing(unittest.TestCase):
         launch = init.split('dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{\n        if (restored', 1)[1]
         self.assertIn('RBPresentRequiredPairing();', launch.split('if (!RBStartupRefreshed)', 1)[0])
 
+    def test_no_presented_modal_fallback_and_disconnect_returns_to_window(self):
+        # The 922073d presentViewController: required-pairing modal was replaced
+        # by the separate window; it must not coexist.
+        show = function_body(self.connection, 'BOOL RBShowRequiredPairing(void)')
+        self.assertNotIn('presentViewController', show)
+        self.assertNotIn('connection.pairing.required', self.connection)
+        self.assertNotIn('lockedToPairing', self.connection)
+        self.assertNotIn('static void RBPresentRequiredPairing(NSUInteger attempt)', self.bootstrap)
+        self.assertNotIn('RBPresentRequiredPairing(0)', self.bootstrap)
+        self.assertEqual(self.bootstrap.count('static void RBPresentRequiredPairing('), 1)
+        finish = function_body(self.connection, '- (void)finishDisconnect')
+        self.assertIn('RBShowRequiredPairing()', finish)
+        self.assertNotIn('controller.required = YES', finish)
+        self.assertNotIn('renderConnection', finish)
+
 
 if __name__ == '__main__':
     unittest.main()

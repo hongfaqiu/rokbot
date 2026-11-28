@@ -129,6 +129,10 @@ int main(int argc, char **argv) { @autoreleasepool {
   CHECK(conn.deviceToken == nil);
   CHECK(gNetworkCleared == 2);
 
+  // No scene/app window here: the required-pairing window cannot appear yet and
+  // the removed presentViewController: modal path must not be used instead.
+  for (NSDictionary *e in gDiagEvents) CHECK(![e[@"event"] isEqualToString:@"connection.pairing.required"]);
+
   puts("PASS: iOS disconnect self-revoke and offline cleanup");
   return 0;
 } }
@@ -204,6 +208,8 @@ typedef NS_ENUM(NSInteger, UIButtonConfigurationCornerStyle) { UIButtonConfigura
 typedef NS_ENUM(NSInteger, UIControlEvents) { UIControlEventTouchUpInside = 1, UIControlEventValueChanged = 2 };
 typedef NS_ENUM(NSInteger, UIControlState) { UIControlStateNormal = 0 };
 typedef NS_ENUM(NSInteger, UIBarButtonSystemItem) { UIBarButtonSystemItemClose };
+typedef NS_ENUM(NSInteger, UISceneActivationState) { UISceneActivationStateUnattached = -1, UISceneActivationStateForegroundActive, UISceneActivationStateForegroundInactive, UISceneActivationStateBackground };
+typedef CGFloat UIWindowLevel;
 typedef double UIFontWeight;
 static const UIFontWeight UIFontWeightBold = 0, UIFontWeightRegular = 0, UIFontWeightSemibold = 0, UIFontWeightMedium = 0;
 static NSString *const UIFontTextStyleBody = @"body";
@@ -229,14 +235,15 @@ static NSString *const UITextContentTypePassword = @"pw";
 @interface UIButtonConfiguration : NSObject @property(copy) NSString *title; @property UIButtonConfigurationCornerStyle cornerStyle; @property(strong) UIColor *baseForegroundColor,*baseBackgroundColor; + (instancetype)tintedButtonConfiguration; + (instancetype)filledButtonConfiguration; @end
 @interface UIButton : UIControl @property(strong) UIButtonConfiguration *configuration; + (instancetype)buttonWithType:(UIButtonType)t; - (void)setImage:(UIImage *)i forState:(UIControlState)s; @end
 @interface UIBarButtonItem : NSObject - (instancetype)initWithBarButtonSystemItem:(UIBarButtonSystemItem)s target:(id)t action:(SEL)a; @end
-@interface UINavigationItem : NSObject @property(strong) UIBarButtonItem *rightBarButtonItem; @end
+@interface UINavigationItem : NSObject @property(strong) UIBarButtonItem *rightBarButtonItem; @property BOOL hidesBackButton; @end
 @interface UINavigationBar : UIView @end
 @interface UISheetPresentationControllerDetent : NSObject + (id)largeDetent; @end
 @interface UISheetPresentationController : NSObject @property(copy) NSArray *detents; @property BOOL prefersGrabberVisible; @end
 @interface UIViewController : NSObject @property(strong) UIView *view; @property(copy) NSString *title; @property(strong) UINavigationItem *navigationItem; @property(strong) UINavigationController *navigationController; @property(strong) UIViewController *presentedViewController; @property(strong) UIViewController *presentingViewController; @property UIModalPresentationStyle modalPresentationStyle; @property BOOL modalInPresentation; @property(readonly) BOOL isBeingPresented, isBeingDismissed; @property(readonly) UISheetPresentationController *sheetPresentationController; - (void)viewDidLoad; - (void)viewWillAppear:(BOOL)a; - (void)viewWillDisappear:(BOOL)a; - (void)presentViewController:(UIViewController *)vc animated:(BOOL)a completion:(void(^)(void))c; - (void)dismissViewControllerAnimated:(BOOL)a completion:(void(^)(void))c; @end
 @interface UINavigationController : UIViewController @property(strong) UINavigationBar *navigationBar; - (instancetype)initWithRootViewController:(UIViewController *)vc; @end
-@interface UIWindow : UIView @property BOOL isKeyWindow; @property(strong) UIViewController *rootViewController; @end
-@interface UIScene : NSObject @end
+@class UIWindowScene;
+@interface UIWindow : UIView @property BOOL isKeyWindow; @property UIWindowLevel windowLevel; @property(strong) UIViewController *rootViewController; - (instancetype)initWithWindowScene:(UIWindowScene *)s; - (void)makeKeyWindow; - (void)makeKeyAndVisible; @end
+@interface UIScene : NSObject @property(readonly) UISceneActivationState activationState; @end
 @interface UIWindowScene : UIScene @property(readonly) NSArray<UIWindow *> *windows; @end
 @interface UIApplication : NSObject @property(class, readonly) UIApplication *sharedApplication; @property(readonly) NSSet *connectedScenes; @end
 @interface UIDevice : NSObject @property(class, readonly) UIDevice *currentDevice; @property(readonly) NSString *name; @end
@@ -269,7 +276,7 @@ static NSString *const UITextContentTypePassword = @"pw";
 @implementation UISheetPresentationController @end
 @implementation UIViewController - (void)viewDidLoad {} - (void)viewWillAppear:(BOOL)a {} - (void)viewWillDisappear:(BOOL)a {} - (void)presentViewController:(UIViewController *)vc animated:(BOOL)a completion:(void(^)(void))c {} - (void)dismissViewControllerAnimated:(BOOL)a completion:(void(^)(void))c {} @end
 @implementation UINavigationController - (instancetype)initWithRootViewController:(UIViewController *)vc { return [super init]; } @end
-@implementation UIWindow @end
+@implementation UIWindow - (instancetype)initWithWindowScene:(UIWindowScene *)s { return [super init]; } - (void)makeKeyWindow {} - (void)makeKeyAndVisible {} @end
 @implementation UIScene @end
 @implementation UIWindowScene @end
 @implementation UIApplication + (UIApplication *)sharedApplication { static UIApplication *a; static dispatch_once_t o; dispatch_once(&o, ^{ a = [self new]; }); return a; } @end
