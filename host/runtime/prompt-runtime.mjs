@@ -19,6 +19,7 @@ export async function installLocalPromptPolicy(directory, library, {
   revision = 'local',
   memoryRoot = process.env.SAND_DATA_ROOT ?? '/data/runtime/host-data',
   memoryMounts = (process.env.ROKBOT_HOST_MEMORY_MOUNTS ?? process.env.GROKBOT_HOST_MEMORY_MOUNTS) === '1',
+  modelIdentity = null,
 } = {}) {
   const settingsPath = join(directory, 'prompt-settings.json'), catalogPath = join(directory, 'prompt-catalog.json');
   let settings = { version: 1, entries: {} }, catalog = await readJson(catalogPath, { version: 1, entries: [] }), tail = Promise.resolve(), reading = false;
@@ -74,9 +75,12 @@ export async function installLocalPromptPolicy(directory, library, {
         if (selected !== undefined) {
           try { rendered = validatePrompt(selected); } catch { rendered = original; }
         }
-        if (role !== 'parent' || !memoryMounts) return rendered;
+        const directives = [];
+        if (typeof modelIdentity === 'string' && modelIdentity && (role === 'parent' || role === 'automation')) directives.push(modelIdentity);
+        if (role === 'parent' && memoryMounts) directives.push(memoryAccessDirective(memoryRoot));
+        if (!directives.length) return rendered;
         try {
-          return validatePrompt(`${rendered.trimEnd()}\n\n${memoryAccessDirective(memoryRoot)}`);
+          return validatePrompt([rendered.trimEnd(), ...directives].join('\n\n'));
         } catch {
           return rendered;
         }

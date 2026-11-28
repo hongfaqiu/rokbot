@@ -14,6 +14,7 @@ import { writePrivate } from '../server/storage.mjs';
 import { decorateLocalSharingApi } from './sharing-import.mjs';
 import { decorateLocalMigrationApi } from './migrate-import.mjs';
 import { installLocalPromptPolicy } from './prompt-runtime.mjs';
+import { modelIdentityDirective } from './model-identity.mjs';
 import { summarizeAgent } from './host-summarize.mjs';
 import { installModelRejectionGuard } from './model-rejection-guard.mjs';
 import { preserveGatewayReplyFields } from './local-harness-bridge.mjs';
@@ -64,7 +65,7 @@ const library = require(libraryPath);
 const core = recovered ? await loadRecoveredHostCore(library, repaired.directory) : { mode: 'bundled' };
 if (recovered) core.reliability = repaired.status;
 library.activateHostLocale();
-const prompts = await installLocalPromptPolicy(dataDir, library, { revision });
+const prompts = await installLocalPromptPolicy(dataDir, library, { revision, modelIdentity: modelIdentityDirective(model) });
 const host = new library.SandHost({
   environment: library.readSandHostEnvironment(process.env),
   startExtensions: createExtensionStarter(library, model),
