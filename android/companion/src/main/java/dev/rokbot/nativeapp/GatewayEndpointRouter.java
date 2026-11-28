@@ -311,6 +311,24 @@ public final class GatewayEndpointRouter {
         return null;
     }
 
+    /** Voice-memo playback: { text, voiceId } -> { audio: base64, mimeType } (Host /local/audio/speech). */
+    public static final String TEXT_TO_SPEECH_RPC = "/aiserver.v1.AiService/TextToSpeech";
+
+    /** Adds the current Bot so the Host can apply its voice; the official request carries none. */
+    public static byte[] normalizeTextToSpeechBody(byte[] raw) {
+        if (raw == null) return null;
+        try {
+            org.json.JSONObject input = new org.json.JSONObject(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
+            if (!(input.opt("text") instanceof String)) return null;
+            String agentId = input.optString("agentId", "");
+            String last = getLastAgentId();
+            if (agentId.isEmpty() && last != null && !last.isEmpty() && last.length() <= 256) input.put("agentId", last);
+            return input.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     public static String rewriteRpcPath(String path) {
         if (path == null) return null;
         if ("/aiserver.v1.GrokBotService/MintSandVoiceCallSecret".equals(path)) {
@@ -318,6 +336,9 @@ public final class GatewayEndpointRouter {
         }
         if ("/aiserver.v1.AiService/TranscribeAudio".equals(path)) {
             return "/local/audio/transcriptions";
+        }
+        if (TEXT_TO_SPEECH_RPC.equals(path)) {
+            return "/local/audio/speech";
         }
         String appIntentMethod = getAppIntentMethod(path);
         if (appIntentMethod != null) {

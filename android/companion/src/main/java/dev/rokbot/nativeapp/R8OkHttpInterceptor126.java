@@ -14,6 +14,7 @@ import java.util.Locale;
  */
 public final class R8OkHttpInterceptor126 implements Tl.w {
     private static final long MAX_TRANSCRIBE_BYTES = 36L * 1024L * 1024L;
+    private static final long MAX_SPEECH_REQ_BYTES = 64L * 1024L;
     private static final int MAX_VOICE_REQ_BYTES = 16384;
     private static final long MAX_APP_INTENT_BYTES = 1024L * 1024L;
     private static final long MAX_SHARING_BYTES = 8192L;
@@ -61,13 +62,15 @@ public final class R8OkHttpInterceptor126 implements Tl.w {
                     && "/aiserver.v1.GrokBotService/MintSandVoiceCallSecret".equals(path);
             boolean isTranscribe = "POST".equals(httpMethod)
                     && "/aiserver.v1.AiService/TranscribeAudio".equals(path);
+            boolean isTextToSpeech = "POST".equals(httpMethod)
+                    && GatewayEndpointRouter.TEXT_TO_SPEECH_RPC.equals(path);
             boolean isAppIntent = "POST".equals(httpMethod)
                     && GatewayEndpointRouter.getAppIntentMethod(path) != null;
             boolean isDashboard = "POST".equals(httpMethod)
                     && GatewayEndpointRouter.getDashboardMethod(path) != null;
 
             String token = Storage.getToken(mContext);
-            if ((isVoiceMint || isTranscribe || isAppIntent || isDashboard) && (token == null || token.isEmpty())) {
+            if ((isVoiceMint || isTranscribe || isTextToSpeech || isAppIntent || isDashboard) && (token == null || token.isEmpty())) {
                 return jsonErrorResponse(request, 401, Localize.t(mContext, "未连接 Host。", "Not connected"));
             }
             // Auto-review switch preference reads: a paired Host has no team or cloud-agent settings.
@@ -127,6 +130,14 @@ public final class R8OkHttpInterceptor126 implements Tl.w {
                         return jsonErrorResponse(request, 400, "Invalid voice request");
                     }
                     newReq.g("POST", createJsonRequestBody(normalized.toString()));
+                    newReq.e("Content-Type", "application/json");
+                } else if (isTextToSpeech) {
+                    byte[] speechBody = GatewayEndpointRouter.normalizeTextToSpeechBody(
+                            readRequestBodyBytes(request.a(), MAX_SPEECH_REQ_BYTES));
+                    if (speechBody == null) {
+                        return jsonErrorResponse(request, 400, Localize.t(mContext, "无法朗读这条消息。", "Could not read this message aloud."));
+                    }
+                    newReq.g("POST", createJsonRequestBody(new String(speechBody, StandardCharsets.UTF_8)));
                     newReq.e("Content-Type", "application/json");
                 } else if (isAppIntent) {
                     byte[] raw = observedRaw != null ? observedRaw : readRequestBodyBytes(request.a(), MAX_APP_INTENT_BYTES);
@@ -198,7 +209,7 @@ public final class R8OkHttpInterceptor126 implements Tl.w {
                 }
                 return resp;
             }
-            if (isVoiceMint || isTranscribe || isAppIntent || isDashboard) {
+            if (isVoiceMint || isTranscribe || isTextToSpeech || isAppIntent || isDashboard) {
                 return jsonErrorResponse(request, 401, Localize.t(mContext, "未连接 Host。", "Not connected"));
             }
         }

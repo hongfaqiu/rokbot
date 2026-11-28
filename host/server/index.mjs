@@ -17,6 +17,7 @@ import { VoiceSynthesis } from './voice-synthesis.mjs';
 import { listFishVoices } from './voice-catalog.mjs';
 import { Voice } from './voice.mjs';
 import { pcmWav } from './voice-audio.mjs';
+import { AudioSpeech, SPEECH_RPC_PATH } from './audio-speech.mjs';
 import { HarnessSettings } from './harness-settings.mjs';
 import { Skills } from './skills.mjs';
 import { ExecutionNode } from './execution-node.mjs';
@@ -233,6 +234,7 @@ export async function createSelfHostServer(options = {}) {
   const speech = await new Speech(dataDir).load();
   const voiceConfig = await new VoiceConfig(dataDir, { speech }).load();
   const synthesis = new VoiceSynthesis(voiceConfig);
+  const audioSpeech = new AudioSpeech({ synthesis, env: options.speechEnv ?? process.env });
   const mediaSettings = await new MediaSettings(dataDir).load(), webSettings = await new WebSettings(dataDir).load();
   const mediaServices = await new MediaServices(dataDir).load(), webServices = new WebServices(dataDir);
   const harness = await new HarnessSettings(dataDir).load();
@@ -975,6 +977,15 @@ export async function createSelfHostServer(options = {}) {
       limiter.check(`speech:${found.id}`, 30);
       connections.track(found.id, response);
       return speech.route(request, response);
+    }
+    if (path === '/local/audio/speech' || path === SPEECH_RPC_PATH) {
+      // Voice-memo playback. The RPC path also answers clients whose interceptor forwards
+      // /aiserver.v1.AiService/TextToSpeech unchanged; it always replies in the RPC JSON shape.
+      const found = device(request, web);
+      limiter.check(`speech-synthesis:${found.id}`, 30);
+      connections.track(found.id, response);
+      return audioSpeech.route(request, response, { json: path === SPEECH_RPC_PATH,
+        resolveAgent: agentId => verifyAgent(agentId, { includeProfile: true }) });
     }
     if (request.method === 'POST' && path === '/local/voice/session') {
       const found = device(request, web); limiter.check(`voice-session:${found.id}`, 10);

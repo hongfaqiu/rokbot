@@ -19,6 +19,7 @@ import java.util.Locale;
 
 public class NetworkInterceptor implements Interceptor {
     private static final long MAX_TRANSCRIBE_BYTES = 36L * 1024L * 1024L;
+    private static final long MAX_SPEECH_REQ_BYTES = 64L * 1024L;
     private static final int MAX_VOICE_REQ_BYTES = 16384;
     private static final long MAX_APP_INTENT_BYTES = 1024L * 1024L;
     private static final long MAX_SHARING_BYTES = 8192L;
@@ -99,11 +100,13 @@ public class NetworkInterceptor implements Interceptor {
                     && "/aiserver.v1.GrokBotService/MintSandVoiceCallSecret".equals(path);
             boolean isTranscribe = "POST".equals(httpMethod)
                     && "/aiserver.v1.AiService/TranscribeAudio".equals(path);
+            boolean isTextToSpeech = "POST".equals(httpMethod)
+                    && GatewayEndpointRouter.TEXT_TO_SPEECH_RPC.equals(path);
             boolean isAppIntent = "POST".equals(httpMethod) && getAppIntentMethod(path) != null;
             boolean isDashboard = "POST".equals(httpMethod) && getDashboardMethod(path) != null;
 
             String token = Storage.getToken(mContext);
-            if ((isVoiceMint || isTranscribe || isAppIntent || isDashboard) && (token == null || token.isEmpty())) {
+            if ((isVoiceMint || isTranscribe || isTextToSpeech || isAppIntent || isDashboard) && (token == null || token.isEmpty())) {
                 return jsonErrorResponse(request, 401, Localize.t(mContext, "未连接 Host。", "Not connected"));
             }
             // Auto-review switch preference reads: a paired Host has no team or cloud-agent settings.
@@ -163,6 +166,15 @@ public class NetworkInterceptor implements Interceptor {
                             return jsonErrorResponse(request, 400, "Invalid voice request");
                         }
                         newReq.method("POST", createJsonRequestBody(normalized.toString()));
+                        newReq.removeHeader("Content-Length");
+                        newReq.header("Content-Type", "application/json");
+                    } else if (isTextToSpeech) {
+                        byte[] speechBody = GatewayEndpointRouter.normalizeTextToSpeechBody(
+                                readRequestBodyBytes(request.body(), MAX_SPEECH_REQ_BYTES));
+                        if (speechBody == null) {
+                            return jsonErrorResponse(request, 400, Localize.t(mContext, "无法朗读这条消息。", "Could not read this message aloud."));
+                        }
+                        newReq.method("POST", createJsonRequestBody(new String(speechBody, StandardCharsets.UTF_8)));
                         newReq.removeHeader("Content-Length");
                         newReq.header("Content-Type", "application/json");
                     } else if (isAppIntent) {
@@ -250,7 +262,7 @@ public class NetworkInterceptor implements Interceptor {
                     return response;
                 }
             }
-            if (isVoiceMint || isTranscribe || isAppIntent || isDashboard) {
+            if (isVoiceMint || isTranscribe || isTextToSpeech || isAppIntent || isDashboard) {
                 return jsonErrorResponse(request, 401, Localize.t(mContext, "未连接 Host。", "Not connected"));
             }
         }
