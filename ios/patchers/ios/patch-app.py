@@ -245,7 +245,11 @@ def main():
             for file in app.rglob('*'):
                 if file.is_file():z.write(file,file.relative_to(a.output))
     if sha(a.source/executable)!=before:raise ValueError('Original source changed')
-    report={'schema':'rokbot-ios-app-patch/v1','app':str(app.resolve()),'ipa':str(ipa.resolve()) if ipa else None,'bundleId':a.bundle_id,'sourceBinarySha256':before,'patchedBinarySha256':sha(app/executable),'dylibSha256':sha(a.dylib),'dylibInjected':not a.without_injection,'originalPreserved':True,'encryptedBinaries':0,'removedExtensions':removed,'expoUpdatesEnabled':False,'signing':'existing-development-profile' if a.identity else 'ad-hoc-requires-resigning','profileName':profile_info.get('Name') if profile_info else None,'deviceVerified':False}
+    # Hash the dylib exactly as shipped in Payload/IPA: --unsigned strips its
+    # LC_CODE_SIGNATURE (and signing rewrites it), so the input hash differs.
+    shipped_dylib=frameworks/'RokBotLocal.dylib'
+    shipped_dylib_sha=sha(shipped_dylib) if shipped_dylib.is_file() else None
+    report={'schema':'rokbot-ios-app-patch/v1','app':str(app.resolve()),'ipa':str(ipa.resolve()) if ipa else None,'bundleId':a.bundle_id,'sourceBinarySha256':before,'patchedBinarySha256':sha(app/executable),'dylibSha256':shipped_dylib_sha,'sourceDylibSha256':sha(a.dylib),'dylibInjected':not a.without_injection,'originalPreserved':True,'encryptedBinaries':0,'removedExtensions':removed,'expoUpdatesEnabled':False,'signing':'existing-development-profile' if a.identity else 'ad-hoc-requires-resigning','profileName':profile_info.get('Name') if profile_info else None,'deviceVerified':False}
     report['preservedExtensions']=extensions
     if a.unsigned:report.update(signing='unsigned',profileName=None)
     (a.output/'patch-report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report))

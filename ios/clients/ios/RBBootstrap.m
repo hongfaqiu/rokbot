@@ -54,13 +54,6 @@ static void RBLoad(id self, SEL cmd, NSURL *url, id progress, id completion) {
   ((void (*)(id, SEL, NSURL *, id, id))RBOriginalLoad)(self, cmd, loaded, progress,
                                                        completion);
 }
-static void RBPresentRequiredPairing(NSUInteger attempt) {
-  if (RBConnection.shared.isPaired) return;
-  if (RBShowRequiredPairing() || attempt >= 20) return;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC / 4)), dispatch_get_main_queue(), ^{
-    RBPresentRequiredPairing(attempt + 1);
-  });
-}
 void RBReloadReactHost(void) {
   dispatch_async(dispatch_get_main_queue(), ^{
     RBDiagnosticsEvent(@"react.reload", @{});
@@ -1129,6 +1122,28 @@ static void RBInstall(void) {
       RBOriginalMenuElementTitle = method_setImplementation(method, (IMP)RBMenuElementTitle);
   }
 }
+// Unpaired devices get a forced, full-screen pairing page. The app window may
+// not exist yet at launch / activation / RN content appearance, so retry every
+// 0.25s, at most 20 attempts. A newer trigger supersedes a pending retry chain.
+static const NSInteger RBRequiredPairingMaxAttempts = 20;
+static const int64_t RBRequiredPairingRetryNanoseconds = NSEC_PER_SEC / 4;
+static NSUInteger RBRequiredPairingGeneration;
+static void RBPresentRequiredPairingAttempt(NSUInteger generation, NSInteger attempt) {
+  if (generation != RBRequiredPairingGeneration) return;
+  if (RBShowRequiredPairing()) return;
+  if (attempt + 1 >= RBRequiredPairingMaxAttempts) {
+    RBDiagnosticsEvent(@"pairing.required.unavailable", @{@"attempts":@(attempt + 1)});
+    return;
+  }
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, RBRequiredPairingRetryNanoseconds), dispatch_get_main_queue(), ^{
+    RBPresentRequiredPairingAttempt(generation, attempt + 1);
+  });
+}
+static void RBPresentRequiredPairing(void) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    RBPresentRequiredPairingAttempt(++RBRequiredPairingGeneration, 0);
+  });
+}
 __attribute__((constructor)) static void RBInitialize(void) {
   @autoreleasepool {
     RBDiagnosticsEvent(@"bootstrap.begin", @{});
@@ -1183,7 +1198,7 @@ __attribute__((constructor)) static void RBInitialize(void) {
                         RBPushRefresh();
                         RBCheckUpdatesInBackgroundIfNeeded();
                         RBStartForegroundTimers();
-                        RBPresentRequiredPairing(0);
+                        RBPresentRequiredPairing();
                       }];
       [center addObserverForName:UIApplicationDidEnterBackgroundNotification
                           object:nil
@@ -1194,16 +1209,16 @@ __attribute__((constructor)) static void RBInitialize(void) {
                         RBPushSetForeground(NO);
                       }];
       for (NSString *name in @[@"RokBotProfileChanged", @"RokBotPushStateChanged", @"RokBotModelConfigChanged", @"RCTContentDidAppearNotification"])
-        [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-          [RBInterface refresh];
-          RBPresentRequiredPairing(0);
-        }];
+        [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { [RBInterface refresh]; }];
+      [center addObserverForName:@"RCTContentDidAppearNotification" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        RBPresentRequiredPairing();
+      }];
       if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive)
         RBStartForegroundTimers();
       dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (restored && RBHost && !RBLoadedPairedBundle) RBReloadReactHost();
         [RBInterface refresh];
-        RBPresentRequiredPairing(0);
+        RBPresentRequiredPairing();
         if (!RBStartupRefreshed) {
           RBStartupRefreshed = YES;
           if (restored) {

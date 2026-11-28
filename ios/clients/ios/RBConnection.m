@@ -91,9 +91,51 @@ static UIViewController *RBTop(void) {
 @property(nonatomic, strong) NSURLSession *pairSession;
 @property(nonatomic, assign) BOOL editingConnection;
 @property(nonatomic, assign) BOOL cancelled;
-@property(nonatomic, assign) BOOL required;
 - (void)renderConnection;
+// Shown by RBShowRequiredPairing(): full-screen, no close control, cannot be
+// dismissed until pairing succeeds.
+@property(nonatomic, assign) BOOL required;
+- (void)finishPairing:(void (^)(void))completion;
 @end
+static UIWindow *RBRequiredPairingWindow;
+static __weak UIWindow *RBRequiredPairingPreviousKeyWindow;
+static UIWindowScene *RBRequiredPairingScene(UIWindow **appWindowOut) {
+  UIWindowScene *fallback = nil;
+  UIWindow *fallbackWindow = nil;
+  for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    if (![scene isKindOfClass:UIWindowScene.class]) continue;
+    if (scene.activationState != UISceneActivationStateForegroundActive &&
+        scene.activationState != UISceneActivationStateForegroundInactive) continue;
+    UIWindow *appWindow = nil;
+    for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+      if (w == RBRequiredPairingWindow || w.hidden) continue;
+      if (w.isKeyWindow) { appWindow = w; break; }
+      if (!appWindow && w.rootViewController) appWindow = w;
+    }
+    if (!appWindow) continue;
+    if (scene.activationState == UISceneActivationStateForegroundActive) {
+      if (appWindowOut) *appWindowOut = appWindow;
+      return (UIWindowScene *)scene;
+    }
+    if (!fallback) { fallback = (UIWindowScene *)scene; fallbackWindow = appWindow; }
+  }
+  if (appWindowOut) *appWindowOut = fallbackWindow;
+  return fallback;
+}
+BOOL RBRequiredPairingVisible(void) {
+  return RBRequiredPairingWindow != nil && !RBRequiredPairingWindow.hidden;
+}
+void RBDismissRequiredPairing(void) {
+  UIWindow *window = RBRequiredPairingWindow;
+  if (!window) return;
+  RBRequiredPairingWindow = nil;
+  window.hidden = YES;
+  window.rootViewController = nil;
+  UIWindow *previous = RBRequiredPairingPreviousKeyWindow;
+  RBRequiredPairingPreviousKeyWindow = nil;
+  if (previous && !previous.hidden) [previous makeKeyWindow];
+  RBDiagnosticsEvent(@"pairing.required.dismiss", @{});
+}
 @interface RBConnection ()
 @property(nonatomic, readwrite) NSString *serverURL;
 @property(nonatomic, readwrite) NSString *deviceToken;
@@ -160,6 +202,7 @@ static UIViewController *RBTop(void) {
   return self.gatewayBundleURL != nil;
 }
 - (void)show {
+  if (!self.isPaired && RBShowRequiredPairing()) return;
   if (self.controller) {
     if (self.controller.address) [self.controller.address becomeFirstResponder];
     return;
@@ -202,13 +245,9 @@ static UIViewController *RBTop(void) {
   RBSyncAppIntentCredentials();
   if (self.didDisconnect)
     self.didDisconnect();
-  RBPairController *controller = self.controller;
-  if (controller) {
-    controller.editingConnection = NO;
-    controller.required = YES;
-    controller.navigationController.modalInPresentation = YES;
-    [controller renderConnection];
-  } else if (!RBShowRequiredPairing()) {
+  // Back to the forced pairing window (RBShowRequiredPairing replaces an open
+  // dismissible connection sheet); retry once if no app window is ready yet.
+  if (!RBShowRequiredPairing()) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(300 * NSEC_PER_MSEC)),
                    dispatch_get_main_queue(), ^{
                      RBShowRequiredPairing();
@@ -278,22 +317,49 @@ static UIViewController *RBTop(void) {
 }
 @end
 BOOL RBShowRequiredPairing(void) {
+  if (!NSThread.isMainThread) {
+    dispatch_async(dispatch_get_main_queue(), ^{ RBShowRequiredPairing(); });
+    return NO;
+  }
   RBConnection *connection = RBConnection.shared;
-  if (connection.isPaired) return YES;
-  if (connection.controller) return YES;
-  UIViewController *top = RBTop();
-  if (!top || !top.view.window) return NO;
-  if (top.isBeingPresented || top.isBeingDismissed) return NO;
+  if (connection.isPaired) {
+    RBDismissRequiredPairing();
+    return YES;
+  }
+  if (RBRequiredPairingVisible()) {
+    [RBRequiredPairingWindow makeKeyAndVisible];
+    return YES;
+  }
+  UIWindow *appWindow = nil;
+  UIWindowScene *scene = RBRequiredPairingScene(&appWindow);
+  // The app window must exist first so this window reliably sits above it.
+  if (!scene || !appWindow) return NO;
+  RBPairController *existing = connection.controller;
+  if (existing && !existing.required) {
+    // A dismissible connection sheet is open; replace it with the required page.
+    existing.cancelled = YES;
+    [existing.pairSession invalidateAndCancel];
+    existing.pairSession = nil;
+    RBNetworkRollback();
+    [existing.navigationController.presentingViewController dismissViewControllerAnimated:NO completion:nil];
+    connection.controller = nil;
+  }
   RBPairController *vc = [RBPairController new];
   vc.required = YES;
+  vc.modalInPresentation = YES;
   connection.controller = vc;
   UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-  // Unpaired installs open on the RokBot pairing page instead of the stock
-  // account sign-in screen; it is not swipe-dismissable until a Host is paired.
   nav.modalPresentationStyle = UIModalPresentationFullScreen;
   nav.modalInPresentation = YES;
-  RBDiagnosticsEvent(@"connection.pairing.required", @{});
-  [top presentViewController:nav animated:NO completion:nil];
+  UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
+  window.windowLevel = appWindow.windowLevel + 1;
+  window.backgroundColor = UIColor.systemGroupedBackgroundColor;
+  window.accessibilityIdentifier = @"rokbot.pairing.required";
+  window.rootViewController = nav;
+  RBRequiredPairingPreviousKeyWindow = appWindow;
+  RBRequiredPairingWindow = window;
+  [window makeKeyAndVisible];
+  RBDiagnosticsEvent(@"pairing.required.show", @{});
   return YES;
 }
 @implementation RBPairController
@@ -363,10 +429,15 @@ BOOL RBShowRequiredPairing(void) {
   self.navigationController.navigationBar.tintColor = UIColor.labelColor;
   self.title = RBL(@"连接设置", @"Connection");
   self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
-  BOOL lockedToPairing = self.required && !RBConnection.shared.isPaired;
-  self.navigationItem.rightBarButtonItem = lockedToPairing ? nil :
+  // The required pairing page has no close/dismiss control.
+  self.navigationItem.hidesBackButton = self.required;
+  self.navigationItem.rightBarButtonItem = self.required ? nil :
       [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose
                                                     target:self action:@selector(close)];
+  if (self.required) {
+    self.modalInPresentation = YES;
+    self.navigationController.modalInPresentation = YES;
+  }
   UIScrollView *scroll = [UIScrollView new];
   scroll.translatesAutoresizingMaskIntoConstraints = NO;
   [self.view addSubview:scroll];
@@ -584,7 +655,16 @@ BOOL RBShowRequiredPairing(void) {
 }
 - (void)editConnection { self.editingConnection = YES; [self renderConnection]; }
 - (void)networkChanged { self.address.placeholder = self.tailcat.on ? @"tailcat://connect/…" : @"https://bot.example.com"; }
+- (void)finishPairing:(void (^)(void))completion {
+  if (self.required) {
+    RBDismissRequiredPairing();
+    if (completion) completion();
+    return;
+  }
+  [self dismissViewControllerAnimated:YES completion:completion];
+}
 - (void)close {
+  if (self.required) return;
   self.cancelled = YES;
   [self.pairSession invalidateAndCancel];
   self.pairSession = nil;
@@ -638,7 +718,7 @@ BOOL RBShowRequiredPairing(void) {
       if (!bundle || !RBNetworkCommit()) { [strong fail:RBL(@"无法保存连接。", @"Could not save connection.")]; return; }
       [NSUserDefaults.standardUserDefaults setObject:RBNetworkAddress() forKey:RBURLKey];
       RBConnection.shared.serverURL = base; RBConnection.shared.gatewayBundleURL = bundle; RBSyncAppIntentCredentials();
-      [strong dismissViewControllerAnimated:YES completion:^{ RBReloadReactHost(); if (RBConnection.shared.didConnect) RBConnection.shared.didConnect(); }];
+      [strong finishPairing:^{ RBReloadReactHost(); if (RBConnection.shared.didConnect) RBConnection.shared.didConnect(); }];
     });
   }] resume];
 }
@@ -767,8 +847,7 @@ BOOL RBShowRequiredPairing(void) {
                   RBConnection.shared.gatewayBundleURL = bundle;
                   RBSyncAppIntentCredentials();
                   strong.key.text = @"";
-                  [strong dismissViewControllerAnimated:YES
-                                             completion:^{
+                  [strong finishPairing:^{
                                                RBReloadReactHost();
                                                if (RBConnection.shared.didConnect)
                                                  RBConnection.shared.didConnect();

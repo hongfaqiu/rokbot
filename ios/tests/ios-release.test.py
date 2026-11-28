@@ -353,6 +353,59 @@ class ReleaseOutput(unittest.TestCase):
         info = plistlib.loads((self.output / 'Payload' / 'Demo.app' / 'Info.plist').read_bytes())
         self.assertEqual(info['LSApplicationQueriesSchemes'], ['altstore', 'sidestore', 'itms-services'])
 
+    def test_unsigned_report_dylib_sha_matches_shipped_signature_stripped_dylib(self):
+        pins = json.loads(MANIFEST.read_text(encoding='utf-8'))
+        source_app = self.root / 'Demo.app'
+        source_app.mkdir()
+        (source_app / 'Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': 'co.anysphere.sand',
+            'CFBundleShortVersionString': pins['version'],
+            'CFBundleVersion': pins['build'],
+            'CFBundleExecutable': 'Demo',
+        }))
+        (source_app / 'Expo.plist').write_bytes(plistlib.dumps({'EXUpdatesEnabled': True}))
+        (source_app / 'Demo').write_bytes(synthetic_arm64_macho())
+        # Signed synthetic dylib: one LC_CODE_SIGNATURE (16-byte command) whose
+        # blob sits at the end of the file, like an ad-hoc signed build.py output.
+        body = bytearray(synthetic_arm64_macho())
+        struct.pack_into('<I', body, 12, 6)  # MH_DYLIB
+        blob_offset, blob = len(body), b'\xfa\xde\x0c\xc0' * 16
+        sizeofcmds = struct.unpack_from('<I', body, 20)[0]
+        struct.pack_into('<IIII', body, 32 + sizeofcmds, 0x1d, 16, blob_offset, len(blob))
+        struct.pack_into('<I', body, 16, 2)
+        struct.pack_into('<I', body, 20, sizeofcmds + 16)
+        signed = bytes(body) + blob
+        dylib = self.root / 'RokBotLocal.dylib'
+        dylib.write_bytes(signed)
+        resources = self.root / 'resources'
+        resources.mkdir()
+        (resources / 'gateway-template.hbc').write_bytes(b'gateway-hbc')
+        (resources / 'unpaired.hbc').write_bytes(b'unpaired-hbc')
+
+        result = subprocess.run(
+            [sys.executable, '-B', str(APP_PATCHER),
+             '--source', str(source_app), '--output', str(self.output),
+             '--dylib', str(dylib), '--resources', str(resources),
+             '--unsigned', '--remove-extensions'],
+            capture_output=True, encoding='utf-8',
+            env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads((self.output / 'patch-report.json').read_text(encoding='utf-8'))
+        shipped = (self.output / 'Payload' / 'Demo.app' / 'Frameworks' / 'RokBotLocal.dylib').read_bytes()
+        self.assertNotEqual(shipped, signed, 'unsigned export must strip LC_CODE_SIGNATURE')
+        self.assertEqual(struct.unpack_from('<I', shipped, 16)[0], 1)
+        self.assertEqual(report['dylibSha256'], hashlib.sha256(shipped).hexdigest())
+        self.assertEqual(report['sourceDylibSha256'], hashlib.sha256(signed).hexdigest())
+        with zipfile.ZipFile(self.output / 'RokBot-Local-resignable.ipa') as ipa:
+            packed = ipa.read('Payload/Demo.app/Frameworks/RokBotLocal.dylib')
+        self.assertEqual(report['dylibSha256'], hashlib.sha256(packed).hexdigest())
+
+    def test_release_delivers_the_shipped_dylib_next_to_the_report(self):
+        source = PATCHER.read_text(encoding='utf-8')
+        self.assertIn("glob('*.app/Frameworks/RokBotLocal.dylib')", source)
+        self.assertIn("!= report['dylibSha256']", source)
+        self.assertNotIn("shutil.copy2(dylib, work / 'patched/RokBotLocal.dylib')", source)
+
     def test_dylib_binary_is_executable_thin_arm64_and_matches_manifest_pin(self):
         dylib = IOS_ROOT / 'bin' / 'RokBotLocal.dylib'
         self.assertTrue(dylib.is_file())

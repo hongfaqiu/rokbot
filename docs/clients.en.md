@@ -107,7 +107,7 @@ python3 ios/release/patch-ios.py \
   --bundle-id dev.rokbot.local
 ```
 
-- `--output` must be a new directory that does not exist yet. It receives the unsigned `RokBot-Local-resignable.ipa`, `RokBotLocal.dylib` and `patch-report.json`, plus `extension-signing.json` when the extensions are kept.
+- `--output` must be a new directory that does not exist yet. It receives the unsigned `RokBot-Local-resignable.ipa`, `RokBotLocal.dylib` and `patch-report.json`, plus `extension-signing.json` when the extensions are kept. The report's `dylibSha256` is the digest of the signature-stripped `RokBotLocal.dylib` actually shipped in the IPA (and next to it); `sourceDylibSha256` is the input library digest (the manifest pin).
 - Sign it with your own signing tool and certificate, then install it. A free Apple ID allows only 3 App IDs, which is not enough for the main app and its three extensions; add `--remove-extensions` to keep only the main app. See [`ios/README.en.md`](../ios/README.en.md).
 
 ### Option 2: Get it from your own Host

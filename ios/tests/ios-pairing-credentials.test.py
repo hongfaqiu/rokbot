@@ -95,7 +95,8 @@ class PairingCredentialsTests(unittest.TestCase):
         marker = "RBConnection.shared.deviceToken = token;"
         source = SOURCE[SOURCE.index(marker) :]
         sync = source.index("RBSyncAppIntentCredentials();")
-        dismiss = source.index("dismissViewControllerAnimated:YES", sync)
+        # finishPairing: dismisses the sheet or tears down the required-pairing window.
+        dismiss = source.index("[strong finishPairing:^{", sync)
         self.assertLess(sync, dismiss)
 
     def test_both_restore_and_connection_edit_keep_the_sync(self):

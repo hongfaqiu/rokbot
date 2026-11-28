@@ -13,9 +13,11 @@
 - (void)disconnect;
 @end
 FOUNDATION_EXPORT void RBReloadReactHost(void);
-// Present the RokBot pairing page full-screen while no Host is paired.
-// Returns NO when no window is ready yet so callers can retry.
+// Full-screen, non-dismissible pairing window above the app window while the
+// device is unpaired. Returns NO only when no app window exists yet (retry).
 FOUNDATION_EXPORT BOOL RBShowRequiredPairing(void);
+FOUNDATION_EXPORT BOOL RBRequiredPairingVisible(void);
+FOUNDATION_EXPORT void RBDismissRequiredPairing(void);
 FOUNDATION_EXPORT void RBOpenAgent(NSString *agentId);
 FOUNDATION_EXPORT void RBTrackModifiedView(UIView *view);
 FOUNDATION_EXPORT BOOL RBHasAncestorPluginTag(UIView *view, NSInteger tag);

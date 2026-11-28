@@ -119,8 +119,13 @@ def main():
         report['ipa'] = 'RokBot-Local-resignable.ipa'
         (work / 'patched/patch-report.json').write_text(json.dumps(report, indent=2)+'\n')
         # Only the IPA, our library and the report are delivered. No profile/certificate.
+        # Deliver the same signature-stripped library that is inside the IPA, so
+        # report['dylibSha256'] matches both shipped copies.
+        shipped = next((work / 'patched/Payload').glob('*.app/Frameworks/RokBotLocal.dylib'))
+        if digest(shipped.read_bytes()) != report['dylibSha256']:
+            raise ValueError('Shipped injection library does not match the patch report')
+        shutil.copy2(shipped, work / 'patched/RokBotLocal.dylib')
         shutil.rmtree(work / 'patched/Payload')
-        shutil.copy2(dylib, work / 'patched/RokBotLocal.dylib')
         shutil.move(str(work / 'patched'), str(args.output))
         print(json.dumps(report))
 

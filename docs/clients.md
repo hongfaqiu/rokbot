@@ -107,7 +107,7 @@ python3 ios/release/patch-ios.py \
   --bundle-id dev.rokbot.local
 ```
 
-- `--output` 必须是不存在的新目录。目录中包含未签名的 `RokBot-Local-resignable.ipa`、`RokBotLocal.dylib`、`patch-report.json`，保留扩展时还有 `extension-signing.json`。
+- `--output` 必须是不存在的新目录。目录中包含未签名的 `RokBot-Local-resignable.ipa`、`RokBotLocal.dylib`、`patch-report.json`，保留扩展时还有 `extension-signing.json`。报告中的 `dylibSha256` 是 IPA 内（与同目录）实际交付、已去除签名的 `RokBotLocal.dylib` 的摘要，`sourceDylibSha256` 是输入库的摘要（即 manifest 固定值）。
 - 用你自己的签名工具和证书签名后安装。免费 Apple ID 最多 3 个 App ID，不够为主应用和三个扩展签名，可以加 `--remove-extensions` 只保留主应用。详见 [`ios/README.md`](../ios/README.md)。
 
 ### 方式二：从自己部署的 Host 获取
