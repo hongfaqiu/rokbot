@@ -27,6 +27,7 @@
 <p align="center">
   <strong>简体中文</strong> ·
   <a href="README.en.md">English</a> ·
+  <a href="README.tr.md">Türkçe</a> ·
   <a href="#功能介绍">功能介绍</a> ·
   <a href="#新方向与路线图">路线图</a> ·
   <a href="#快速开始">快速开始</a> ·
