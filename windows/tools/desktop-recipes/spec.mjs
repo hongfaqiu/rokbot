@@ -168,6 +168,38 @@ export function targetMeta(target = 'windows') {
   return meta;
 }
 
+// The local-exec daemon of each official build this repository patches: 1.3.0 (spec targets)
+// and the retained 1.2.3 and 0.71.2 recipes (build-retained-local-exec.mjs). `tail` is the
+// daemon's own start-up, replaced by the extension and the exports the local client uses.
+export const LOCAL_EXEC_DAEMON = Object.freeze({
+  '1.3.0': Object.freeze({
+    tail: ['pZt().catch(r=>{let e=r instanceof Error?r:new Error(String(r));process.stderr.write(`[sand-local-exec-daemon] fatal:',
+      'finally(()=>process.exit(1))});'],
+    exports: 'module.exports={Provider:rokbotEnhanceLocalExecProvider(Xx),ComputerUse:Zx,findComputerHelper:QUe,decideLocalUse:jK,isLocalUseBlocked:gEe,retireApproval:mEe,parseApproval:Uft};',
+  }),
+  '1.2.3': Object.freeze({
+    tail: ['$Ht().catch(r=>{let e=r instanceof Error?r:new Error(String(r));process.stderr.write(`[sand-local-exec-daemon] fatal:',
+      'finally(()=>process.exit(1))});'],
+    exports: 'module.exports={Provider:rokbotEnhanceLocalExecProvider(Xw),ComputerUse:Zw,findComputerHelper:tDe,decideLocalUse:jW,isLocalUseBlocked:p9e,retireApproval:d9e,parseApproval:Rct};',
+  }),
+  '0.71.2': Object.freeze({
+    tail: ['n7r().catch(t=>{let e=t instanceof Error?t:new Error(String(t));process.stderr.write(`[sand-local-exec-daemon] fatal:',
+      'finally(()=>process.exit(1))})'],
+    exports: 'module.exports={Provider:rokbotEnhanceLocalExecProvider(oN),ComputerUse:sN,findComputerHelper:p6,decideLocalUse:qQ,isLocalUseBlocked:yTe,retireApproval:_Te,parseApproval:Ybt}',
+  }),
+});
+
+export function localExecDaemonEntry(version) {
+  const daemon = LOCAL_EXEC_DAEMON[version];
+  if (!daemon) throw new Error(`No local-exec daemon anchors for ${version}`);
+  return {
+    path: 'dist/local-exec-daemon/main.cjs', source: 'dist/local-exec-daemon/main.cjs',
+    edits: [
+      { removeThrough: daemon.tail, text: `${extension('local-exec-transfer.js')}\n${daemon.exports}` },
+    ],
+  };
+}
+
 export function specForTarget(target = 'windows') {
   const { chunks } = targetMeta(target);
   return [
@@ -188,14 +220,7 @@ export function specForTarget(target = 'windows') {
           text: '\nmodule.exports={activateLocale:BA};\n' },
       ],
     },
-    {
-      path: 'dist/local-exec-daemon/main.cjs', source: 'dist/local-exec-daemon/main.cjs',
-      edits: [
-        { removeThrough: ['pZt().catch(r=>{let e=r instanceof Error?r:new Error(String(r));process.stderr.write(`[sand-local-exec-daemon] fatal:',
-          'finally(()=>process.exit(1))});'],
-          text: `${extension('local-exec-transfer.js')}\nmodule.exports={Provider:rokbotEnhanceLocalExecProvider(Xx),ComputerUse:Zx,findComputerHelper:QUe,decideLocalUse:jK,isLocalUseBlocked:gEe,retireApproval:mEe,parseApproval:Uft};` },
-      ],
-    },
+    localExecDaemonEntry(targetMeta(target).version),
     {
       path: 'dist/node-agent-coordinator/local-browser.cjs', source: 'dist/node-agent-coordinator/main.cjs',
       edits: [
