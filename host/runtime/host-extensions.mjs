@@ -17,6 +17,7 @@ import { startLocalWebhooks } from './host-webhooks.mjs';
 import { startLocalFederation } from './host-federation.mjs';
 import { createLocalServiceRuntime } from './media-runtime.mjs';
 import { modelRouteForAgent, modelRouteForScenario } from './model-routing.mjs';
+import { createLiveModelRouting } from './model-change.mjs';
 import { reasoningOptions } from './model-policy.mjs';
 import { contextCacheFilePath } from './model-context-cache.mjs';
 import { createLocalExecBridge } from './local-exec-bridge.mjs';
@@ -115,6 +116,8 @@ export function createInference(config, library, services, { fetchImpl, sessionF
   );
   return {
     isReady: async () => true,
+    // The one configured-route source: sessions below, CurrentModel and ProposeModelChange read it.
+    liveModelRouting: createLiveModelRouting(config),
     port: {
       resolvePrivacyMode: async () => library.PrivacyMode.NO_STORAGE,
       getGeminiVideoAttachedMediaUrlProvider: () => undefined,

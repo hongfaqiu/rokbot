@@ -12,6 +12,7 @@ const CURRENT_MODEL_DESCRIPTION = [
   'Read-only. Returns the model that actually served this conversation\'s latest model call (the one that decided to call this tool),',
   'including the configured fallback model when the primary route failed and a fallback answered.',
   'Call it when asked which model you are, which model is answering, or whether a fallback is in use, and answer with what it returns.',
+  'It also states the configured route (primary and fallbacks) that this Bot\'s next turns will use.',
   'It never returns API keys, tokens or endpoint URLs. Takes no arguments.',
 ].join(' ');
 
@@ -76,11 +77,20 @@ export function createServedModelTracker({ keep = 8 } = {}) {
   };
 }
 
-export function createCurrentModelTool(library, tracker) {
+/**
+ * `configured()` (optional) returns the credential-free line for the route this Bot's next turns
+ * use, read from the same live routing object the inference sessions use (model-change.mjs).
+ */
+export function createCurrentModelTool(library, tracker, { configured } = {}) {
   return makeLocalHarnessTool(library, {
     name: CURRENT_MODEL_TOOL_NAME,
     description: CURRENT_MODEL_DESCRIPTION,
     schema: { type: 'object', properties: {}, additionalProperties: false },
-    run: async () => describeServedModel(tracker.latest()),
+    run: async () => {
+      const served = describeServedModel(tracker.latest());
+      let route = '';
+      try { route = configured?.() ?? ''; } catch { route = ''; }
+      return route ? `${served} ${route}` : served;
+    },
   });
 }

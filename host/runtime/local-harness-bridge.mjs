@@ -30,6 +30,11 @@ import {
 } from './local-state-tools.mjs';
 import { createLocalCanvasTools } from './local-canvas-tools.mjs';
 import { createCurrentModelTool, createServedModelTracker } from './current-model.mjs';
+import {
+  createModelChangeController, createProposeModelChangeTool, createTurnProvenance, describeRouteSummary,
+  installModelChangeConfirmation, userTypedTextForRun,
+} from './model-change.mjs';
+import { Models } from '../server/models.mjs';
 
 const patchedLibraries = new WeakSet();
 
@@ -779,9 +784,23 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
   const effortTool = createLocalEffortToolPort({ session });
   // Local canvases replace the official cloud canvas service (WriteCanvas & co.).
   const canvasTools = dataDir ? createLocalCanvasTools({ library, dataDir, agentId }).tools : [];
-  // Read-only CurrentModel: the model (or fallback) that actually served this runner's latest call.
+  // Read-only CurrentModel: the model (or fallback) that actually served this runner's latest call,
+  // plus the configured route for the next turns from the same live routing object inference uses.
   const servedModels = createServedModelTracker();
-  const localExtraTools = [...canvasTools, createCurrentModelTool(library, servedModels)];
+  const liveRouting = inferenceExt?.liveModelRouting;
+  // T-59 part 2: ProposeModelChange. Who started each run is recorded around runner.run (below).
+  const turnProvenance = createTurnProvenance();
+  const modelChange = modelChangeControllerFor(tm, { dataDir, liveRouting, nextEntryId, createSendMessageEntry });
+  const localExtraTools = [
+    ...canvasTools,
+    createCurrentModelTool(library, servedModels, { configured: () => describeRouteSummary(liveRouting?.summary?.(agentId)) }),
+    createProposeModelChangeTool(library, {
+      controller: modelChange, provenance: turnProvenance, agentId,
+      postCard: (formRequest, nonce) => transport.onUpdate({
+        type: 'send-message', message: { type: 'user-form', formRequest }, userForm: { requestId: nonce }, timestampMs: Date.now(),
+      }),
+    }),
+  ];
   const rawSkillStore = session.skills ?? { list: () => [], listAll: () => [] };
   const withReferenceSkill = (items) => {
     const list = Array.isArray(items) ? items : [];
@@ -938,12 +957,69 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
     sendToAgent: createAgentMessageSender({ tm, fromAgentId: agentId, federation: federationExt }),
     transport,
   });
+  // Record who started each run; ProposeModelChange refuses outside a client-sent user turn.
+  if (typeof runner.run === 'function') {
+    const runUnrecorded = runner.run.bind(runner);
+    runner.run = (prompt, options, ...rest) => turnProvenance.run({
+      hidden: options?.hidden === true,
+      requestSource: options?.requestSource,
+      inAutomationRun: options?.inAutomationRun === true,
+      group: groupTurn != null,
+      typedText: options?.hidden === true ? null : userTypedTextForRun(readSessionTranscriptEntries(tm, session), prompt),
+    }, () => runUnrecorded(prompt, options, ...rest));
+  }
   tm.rokbotBackgroundRecovery?.attachRunner(runner, agentId);
   runner.rokbotBeginGroupTurn = (capture) => {
     groupTurn = capture;
     return () => { if (groupTurn === capture) groupTurn = null; };
   };
   return runner;
+}
+
+const modelChangeControllers = new WeakMap();
+
+/**
+ * One ProposeModelChange controller per transcript manager. It installs the confirmation hook on
+ * the kernel's submitUserForm / dismissUserForm; if that is impossible every proposal is refused.
+ */
+function modelChangeControllerFor(tm, { dataDir, liveRouting, nextEntryId, createSendMessageEntry }) {
+  const existing = modelChangeControllers.get(tm);
+  if (existing) return existing;
+  const modelFile = process.env.ROKBOT_MODEL_ENV ?? process.env.GROKBOT_MODEL_ENV;
+  const controller = createModelChangeController({
+    dataDir,
+    liveRouting,
+    openModels: () => (modelFile && dataDir ? new Models(dataDir, { filename: modelFile }) : null),
+  });
+  installModelChangeConfirmation(tm, controller, {
+    locate: async (agentId, entryId) => {
+      if (typeof agentId !== 'string' || typeof entryId !== 'string') return null;
+      await tm.sessions?.ensureActionTarget?.(agentId);
+      const active = tm.sessions?.activeSession;
+      const session = active?.id === agentId ? active : tm.sessions?.liveSessions?.get?.(agentId);
+      if (!session || session.id !== agentId) return null;
+      const entry = readSessionTranscriptEntries(tm, session).find((item) => item?.id === entryId);
+      return entry ? { session, entry } : null;
+    },
+    settle: async ({ session, entry }, resolution, message) => {
+      const responses = tm.userFormResponses;
+      if (typeof responses?.stampResolution === 'function') {
+        responses.stampResolution({ entryId: entry.id, session, resolution });
+      } else {
+        let updated = null;
+        session.db?.updateTranscriptEntry?.(entry.id, (prev) => (updated = { ...prev, formResolution: resolution }));
+        if (updated) tm.roster?.emit?.({ type: 'updated', entry: updated }, session.id);
+      }
+      if (message) {
+        const entries = readSessionTranscriptEntries(tm, session);
+        const sendId = nextEntryId(entries, 'send-message', readSessionStoredIds(session));
+        persistTranscriptEntry(tm, session, createSendMessageEntry(sendId, { type: 'text', content: message }, Date.now()));
+      }
+      await tm.roster?.emitAgentUpdate?.(session.id);
+    },
+  });
+  modelChangeControllers.set(tm, controller);
+  return controller;
 }
 
 /**
