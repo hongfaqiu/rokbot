@@ -81,10 +81,13 @@ const textOf = (body) => (body.messages ?? [])
   .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')))
   .join('\n');
 
-async function bootHost(t) {
+async function bootHost(t, { harnessSettings } = {}) {
   const stateDir = await mkdtemp(join(tmpdir(), 'rokbot-user-form-submit-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   const { workSeed, reliableDir } = await materializeSeed(stateDir);
+  if (harnessSettings !== undefined) {
+    await writeFile(join(stateDir, 'harness-settings.json'), JSON.stringify({ version: 1, settings: harnessSettings }));
+  }
   const tokenFile = join(stateDir, 'internal-host-token');
   await writeFile(tokenFile, '0123456789abcdef0123456789abcdef0123456789abcdef\n', { mode: 0o600 });
 
@@ -204,9 +207,12 @@ const transcriptOf = async (api, agentId) => {
   return Array.isArray(t) ? t : (t?.entries ?? t?.transcript ?? []);
 };
 
+// PR 24's flow must be identical whether or not choice-card answers show a bubble.
+for (const harnessSettings of [undefined, { showWidgetAnswerBubble: false }]) {
+const bubbleSuffix = harnessSettings ? ' (showWidgetAnswerBubble=false)' : '';
 if (configuredSeed || configuredArchive) {
-  test('real 2bb5e41 host: submitting a RequestUserForm card resolves it and resumes the 1:1 bot with the receipt', async (t) => {
-    const { host, api, requests } = await bootHost(t);
+  test(`real 2bb5e41 host: submitting a RequestUserForm card resolves it and resumes the 1:1 bot with the receipt${bubbleSuffix}`, async (t) => {
+    const { host, api, requests } = await bootHost(t, { harnessSettings });
     const created = await api.createAgent({ name: 'Form Bot', description: 'asks with a form' });
     const agentId = created.agent.id;
     await api.openAgent({ id: agentId });
@@ -256,8 +262,8 @@ if (configuredSeed || configuredArchive) {
     );
   });
 
-  test('real 2bb5e41 host: dismissing a RequestUserForm card resumes the 1:1 bot with the dismissed receipt', async (t) => {
-    const { host, api, requests } = await bootHost(t);
+  test(`real 2bb5e41 host: dismissing a RequestUserForm card resumes the 1:1 bot with the dismissed receipt${bubbleSuffix}`, async (t) => {
+    const { host, api, requests } = await bootHost(t, { harnessSettings });
     const created = await api.createAgent({ name: 'Form Bot', description: 'asks with a form' });
     const agentId = created.agent.id;
     await api.openAgent({ id: agentId });
@@ -274,4 +280,5 @@ if (configuredSeed || configuredArchive) {
     const resolved = (await transcriptOf(api, agentId)).find((e) => e?.id === formEntry.id);
     assert.equal(resolved.formResolution, 'dismissed');
   });
+}
 }

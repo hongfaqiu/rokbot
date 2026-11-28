@@ -46,6 +46,26 @@ export function stripLeadingWidgetAnswerNote(text) {
   return stripped.length > 0 ? stripped : trimmed;
 }
 
+/**
+ * Set around the kernel's respondToWidget when showWidgetAnswerBubble is off. The first sendPrompt
+ * in that call that carries this card's "[Answering your question <entryId>: …]" note runs without
+ * appending a user message; the bot still gets the full text. Consumed once, so sends made later
+ * inside the woken turn (and the group branch, which sends the bare value) are not affected.
+ */
+const silentWidgetAnswer = new AsyncLocalStorage();
+
+export function withSilentWidgetAnswer(entryId, fn) {
+  return silentWidgetAnswer.run({ entryId: String(entryId), consumed: false }, fn);
+}
+
+export function takeSilentWidgetAnswer(trimmedPrompt) {
+  const pending = silentWidgetAnswer.getStore();
+  if (!pending || pending.consumed) return false;
+  if (!trimmedPrompt.startsWith(`[Answering your question ${pending.entryId}:`)) return false;
+  pending.consumed = true;
+  return true;
+}
+
 const REPLY_TARGET_MAX_LENGTH = 256;
 const REPLY_QUOTE_MAX_LENGTH = 2000;
 const gatewayReplyFields = new AsyncLocalStorage();
@@ -965,7 +985,10 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
       requestSource: options?.requestSource,
       inAutomationRun: options?.inAutomationRun === true,
       group: groupTurn != null,
-      typedText: options?.hidden === true ? null : userTypedTextForRun(readSessionTranscriptEntries(tm, session), prompt),
+      // A run whose user line was not written to the chat (a silent card answer) was not typed now.
+      typedText: options?.hidden === true || options?.appendUserMessage === false
+        ? null
+        : userTypedTextForRun(readSessionTranscriptEntries(tm, session), prompt),
     }, () => runUnrecorded(prompt, options, ...rest));
   }
   tm.rokbotBackgroundRecovery?.attachRunner(runner, agentId);
@@ -1571,6 +1594,9 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
       const attachmentNames = Array.isArray(options.attachmentNames) ? options.attachmentNames : [];
       const trimmed = String(prompt ?? '').trim();
       if (trimmed.length === 0 && attachmentPaths.length === 0) return;
+      if (options.appendUserMessage === undefined && takeSilentWidgetAnswer(trimmed)) {
+        options = { ...options, appendUserMessage: false };
+      }
 
       const nonce = typeof options.clientNonce === 'string' && options.clientNonce.length > 0
         ? options.clientNonce
@@ -1821,7 +1847,7 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
   return true;
 }
 
-export function decorateHostExtensionsFor2bb5e41(extension, api, { context, library, apis, getInferenceReady }) {
+export function decorateHostExtensionsFor2bb5e41(extension, api, { context, library, apis, getInferenceReady, showWidgetAnswerBubble }) {
   if (extension.id === 'memory') {
     const sandRoot = library.getSandRootDir();
     if (!api.options) api.options = { sandRoot, agentsRootDir: join(sandRoot, 'agents') };
@@ -1864,6 +1890,17 @@ export function decorateHostExtensionsFor2bb5e41(extension, api, { context, libr
     installLocalUserFormResume(api, { extensions: (id) => apis.get(id) }, { library });
     if (api.widgetResponses && typeof api.widgetResponses.respondToWidget === 'function' && !api.widgetResponses.respondToWidget.__rokbotResourceRemoval) {
       const origRespondToWidget = api.widgetResponses.respondToWidget.bind(api.widgetResponses);
+      // Bot-resource removal cards (Remove and Cancel) keep their upstream behaviour under every setting.
+      const isResourceRemovalCard = async (entryId, agentId) => {
+        try {
+          await api.sessions.ensureActionTarget(agentId);
+          const targetSession = api.sessions.activeSession;
+          const entries = targetSession ? readSessionTranscriptEntries(api, targetSession) : [];
+          return entries.find((e) => e?.id === entryId)?.message?.widget?.resourceRemoval != null;
+        } catch {
+          return true;
+        }
+      };
       const wrappedRespondToWidget = async (entryId, value, agentId) => {
         const trimmed = String(value ?? '').trim();
         if (trimmed === 'bot-resource:remove') {
@@ -1889,7 +1926,17 @@ export function decorateHostExtensionsFor2bb5e41(extension, api, { context, libr
             api.hostLog?.(`bot resource removal widget failed: ${error?.message ?? error}`, 'error');
           }
         }
-        return await origRespondToWidget(entryId, value, agentId);
+        // Read at answer time so a settings change applies to the next answer without a restart.
+        let showBubble = true;
+        try {
+          showBubble = typeof showWidgetAnswerBubble === 'function' ? (await showWidgetAnswerBubble()) !== false : true;
+        } catch (error) {
+          api.hostLog?.(`widget answer bubble setting unreadable, showing the bubble: ${error?.message ?? error}`, 'warn');
+        }
+        if (showBubble || !entryId || trimmed === 'bot-resource:remove' || await isResourceRemovalCard(entryId, agentId)) {
+          return await origRespondToWidget(entryId, value, agentId);
+        }
+        return await withSilentWidgetAnswer(entryId, () => origRespondToWidget(entryId, value, agentId));
       };
       wrappedRespondToWidget.__rokbotResourceRemoval = true;
       api.widgetResponses.respondToWidget = wrappedRespondToWidget;

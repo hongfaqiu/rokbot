@@ -65,10 +65,13 @@ const textOf = (body) => (body.messages ?? [])
   .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')))
   .join('\n');
 
-async function bootHost(t) {
+async function bootHost(t, { harnessSettings } = {}) {
   const stateDir = await mkdtemp(join(tmpdir(), 'rokbot-model-change-e2e-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   const { workSeed, reliableDir } = await materializeSeed(stateDir);
+  if (harnessSettings !== undefined) {
+    await writeFile(join(stateDir, 'harness-settings.json'), JSON.stringify({ version: 1, settings: harnessSettings }));
+  }
   const tokenFile = join(stateDir, 'internal-host-token');
   await writeFile(tokenFile, '0123456789abcdef0123456789abcdef0123456789abcdef\n', { mode: 0o600 });
 
@@ -195,9 +198,12 @@ const transcriptOf = async (api, agentId) => {
 const toolResultText = (body) => (body.messages ?? []).filter((m) => m.role === 'tool')
   .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))).join('\n');
 
+// PR 26's flow must be identical whether or not choice-card answers show a bubble.
+for (const harnessSettings of [undefined, { showWidgetAnswerBubble: false }]) {
+const bubbleSuffix = harnessSettings ? ' (showWidgetAnswerBubble=false)' : '';
 if (configuredSeed || configuredArchive) {
-  test('real 2bb5e41 host: a user asks in chat, confirms the card, and the next turn runs on the new model', async (t) => {
-    const { host, api, requests, stateDir, modelFile } = await bootHost(t);
+  test(`real 2bb5e41 host: a user asks in chat, confirms the card, and the next turn runs on the new model${bubbleSuffix}`, async (t) => {
+    const { host, api, requests, stateDir, modelFile } = await bootHost(t, { harnessSettings });
     const created = await api.createAgent({ name: 'Model Bot', description: 'switches models' });
     const agentId = created.agent.id;
     await api.openAgent({ id: agentId });
@@ -242,4 +248,5 @@ if (configuredSeed || configuredArchive) {
     assert.ok(requests.length > next);
     assert.ok(requests.slice(next).every((body) => body.model === 'model-b'), 'the next turn runs on the new model');
   });
+}
 }

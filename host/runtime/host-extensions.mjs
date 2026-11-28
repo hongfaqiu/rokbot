@@ -220,6 +220,11 @@ export function createExtensionStarter(library, modelConfig) {
   return async ({ host }) => {
     const extensionDir = process.env.ROKBOT_DATA_DIR ?? process.env.GROKBOT_DATA_DIR ?? process.env.ROKBOT_STATE_DIR ?? process.env.GROKBOT_STATE_DIR ?? '/research/state';
     capabilities = await createLocalCapabilities(extensionDir);
+    // harness-settings.json is re-read here so a change applies to the very next card answer.
+    const showWidgetAnswerBubble = async () => {
+      try { await capabilities.refresh(); } catch {}
+      return capabilities.get().showWidgetAnswerBubble !== false;
+    };
     services = await createLocalServiceRuntime(extensionDir);
     const startExtension = async (extension, context) => {
       host.log(`starting extension ${extension.id}`);
@@ -227,6 +232,7 @@ export function createExtensionStarter(library, modelConfig) {
         const api = await startLocalMemory(context, extension, capabilities);
         return decorateHostExtensionsFor2bb5e41(extension, api, {
           context, library, apis, getInferenceReady: () => apis.get('inference')?.isReady?.() ?? true,
+          showWidgetAnswerBubble,
         });
       }
       const api = await (replacements[extension.id] ? replacements[extension.id](context) : extension.start(context));
@@ -238,6 +244,7 @@ export function createExtensionStarter(library, modelConfig) {
       if (extension.id === 'turn-execution' || extension.id === 'transcript') {
         return decorateHostExtensionsFor2bb5e41(extension, api, {
           context, library, apis, getInferenceReady: () => apis.get('inference')?.isReady?.() ?? true,
+          showWidgetAnswerBubble,
         });
       }
       if (extension.id !== 'automations') return api;

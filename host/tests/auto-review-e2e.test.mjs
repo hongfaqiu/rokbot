@@ -33,7 +33,7 @@ async function waitFor(predicate, { timeoutMs = 20_000, intervalMs = 50, what = 
   }
 }
 
-async function autoReviewHost(t, { ttlMs }) {
+async function autoReviewHost(t, { ttlMs, harnessSettings }) {
   const { createServer } = await import('node:http');
   const { createRequire } = await import('node:module');
   const { existsSync, rmSync } = await import('node:fs');
@@ -46,7 +46,7 @@ async function autoReviewHost(t, { ttlMs }) {
   const HOST_DIR = resolve(import.meta.dirname, '..');
 
   const stateDir = await realpath(await mkdtemp(join(tmpdir(), 'rokbot-2bb5e41-auto-review-')));
-  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  t.after(() => rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const scratchRoot = join(stateDir, 'scratch');
   const workSeed = join(stateDir, 'seed');
   await cp(configuredSeed, workSeed, { recursive: true });
@@ -171,6 +171,9 @@ async function autoReviewHost(t, { ttlMs }) {
   t.after(() => new Promise((r) => { exec.closeAllConnections?.(); exec.close(r); }));
   const tokenFile = join(stateDir, 'internal-host-token');
   await writeFile(tokenFile, '0123456789abcdef0123456789abcdef0123456789abcdef\n', { mode: 0o600 });
+  if (harnessSettings !== undefined) {
+    await writeFile(join(stateDir, 'harness-settings.json'), JSON.stringify({ version: 1, settings: harnessSettings }));
+  }
 
   const env = {
     ROKBOT_RUNTIME_DIR: join(HOST_DIR, 'runtime'), ROKBOT_STATE_DIR: stateDir, ROKBOT_DATA_DIR: stateDir,
@@ -240,10 +243,13 @@ async function newBot(api, name) {
   return agentId;
 }
 
+// Approval cards are resolved by resolveAutoReviewApproval, never respondToWidget: identical under both values.
+for (const harnessSettings of [undefined, { showWidgetAnswerBubble: false }]) {
+const bubbleSuffix = harnessSettings ? ' (showWidgetAnswerBubble=false)' : '';
 if (configuredSeed) {
-  test('real 2bb5e41 Host: Auto-review BLOCK shows an approval card; approve runs, deny refuses, a new message or the TTL expires it, off skips review', async (t) => {
+  test(`real 2bb5e41 Host: Auto-review BLOCK shows an approval card; approve runs, deny refuses, a new message or the TTL expires it, off skips review${bubbleSuffix}`, async (t) => {
     if (!await treeSitterAvailable()) return t.skip('tree-sitter natives not on NODE_PATH (shell review needs them)');
-    const h = await autoReviewHost(t, { ttlMs: 8_000 });
+    const h = await autoReviewHost(t, { ttlMs: 8_000, harnessSettings });
     const { api, seen, executed, logs, scratch, existsSync } = h;
     await api.setHostSettings({ autoReviewInstructions: { isEnabled: true, allowInstructions: [], blockInstructions: [] } });
 
@@ -323,4 +329,5 @@ if (configuredSeed) {
     assert.ok(!existsSync(offDir));
     assert.deepEqual(executed, [approveDir, offDir]);
   });
+}
 }

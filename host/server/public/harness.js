@@ -9,6 +9,7 @@ const capabilities = [
   ['passkeys', '通行密钥', '经客户端完成 WebAuthn 登录'],
   ['macComputer', 'Mac 图形操作', '在已连接的 Mac 上点击和输入'],
   ['teachTask', '演示任务', '录制操作并整理成技能'],
+  ['showWidgetAnswerBubble', '选择卡片回答显示为消息', '关闭后点选选项只在卡片上显示，不再在对话里多一条你的消息；Bot 仍会收到你的选择'],
 ];
 
 export function createHarnessEditor({ api, toast }) {

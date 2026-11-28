@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { readJson } from '../server/storage.mjs';
-import { defaultHarnessSettings, validateHarnessSettings } from '../server/harness-settings.mjs';
+import { defaultHarnessSettings, readHarnessSettings } from '../server/harness-settings.mjs';
 
 const controlled = {
   sand_browser_use_subagent: 'browserUse', sand_user_form: 'userForm',
@@ -12,19 +12,20 @@ const disabled = new Set(['sand_draft_external_message', 'grok_bot_stripe_link',
 /** Original stateful services keep their lifetime; only local feature decisions change. */
 export async function createLocalCapabilities(directory) {
   const filename = join(directory, 'harness-settings.json');
-  let settings = { ...defaultHarnessSettings }, stopped = false, reading = false;
+  let settings = { ...defaultHarnessSettings }, stopped = false, reading = null;
   const listeners = new Set();
-  async function refresh() {
-    if (stopped || reading) return;
-    reading = true;
-    try {
-      const stored = await readJson(filename, null);
-      const next = validateHarnessSettings(stored?.settings ?? defaultHarnessSettings);
-      if (JSON.stringify(next) !== JSON.stringify(settings)) {
-        settings = next;
-        for (const listener of listeners) listener(settings);
-      }
-    } finally { reading = false; }
+  // Callers that need the current value (a card answer) await the read already in flight.
+  function refresh() {
+    if (stopped) return Promise.resolve();
+    return (reading ??= read().finally(() => { reading = null; }));
+  }
+  async function read() {
+    const stored = await readJson(filename, null);
+    const next = readHarnessSettings(stored?.settings ?? defaultHarnessSettings);
+    if (JSON.stringify(next) !== JSON.stringify(settings)) {
+      settings = next;
+      for (const listener of listeners) listener(settings);
+    }
   }
   await refresh();
   const timer = setInterval(() => refresh().catch(error => console.warn('[capabilities]', error.name)), 1000);
