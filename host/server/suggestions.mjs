@@ -51,6 +51,72 @@ const COMPLETION_MIN_CHARS = 2;
 const COMPLETION_MAX_INPUT_CHARS = 2_000;
 const COMPLETION_PROMPT_CHARS = 600;
 const MAX_COMPLETION_CHARS = 80;
+// Quotes the next message replies to (the composer's reply pills): context, never the user's words.
+const MAX_QUOTES = 3;
+const MAX_QUOTE_CHARS = 500;
+// A reply notification can come in the middle of a turn (a message, then tool calls): the
+// background answer waits until the Bot is idle, looking again every busyRetryMs.
+const BUSY_RETRY_MS = 2_000;
+const MAX_BUSY_RETRIES = 90;
+// "[In reply to <id>: \"<quote>\"]" a runner may put in front of what the user typed.
+const REPLY_CONTEXT_PREFIX_RE = /^\s*\[In reply to [^\]:]{1,256}:\s*"[\s\S]*?"\]\s*/;
+
+/** The quotes of a request: [{ id, text }], at most 3, trimmed; anything else is dropped. */
+export function normalizeQuotes(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const text = String(typeof item === 'string' ? item : item?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUOTE_CHARS);
+    const id = typeof item?.id === 'string' && AGENT_ID_RE.test(item.id) ? item.id : '';
+    if (!text || seen.has(`${id}|${text}`)) continue;
+    seen.add(`${id}|${text}`);
+    out.push(id ? { id, text } : { text });
+    if (out.length >= MAX_QUOTES) break;
+  }
+  return out;
+}
+
+/** A transcript entry still being written (a streamed reply, a running tool call). */
+export function entryInProgress(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.isStreaming === true || entry.streaming === true) return true;
+  const status = String(entry.status ?? entry.state ?? '').toLowerCase();
+  return ['running', 'in_progress', 'in-progress', 'pending', 'streaming'].includes(status);
+}
+
+/**
+ * Inline completion is offered only at the end of a one-line draft that is not a /command and not
+ * inside code (the clients check the caret, the selection and the IME composition themselves).
+ */
+export function completionDraftAllowed(draft) {
+  const text = String(draft ?? '');
+  if (/\n/.test(text.replace(/\n+$/, ''))) return false;
+  if (/^\s*\//.test(text)) return false;
+  const fences = text.match(/(^|\n)\s*(```|~~~)/g)?.length ?? 0;
+  if (fences % 2 === 1) return false;
+  const ticks = text.replace(/(```|~~~)[\s\S]*?(```|~~~)/g, '').match(/`/g)?.length ?? 0;
+  return ticks % 2 === 0;
+}
+
+/**
+ * A suffix that rewrites the sentence instead of continuing it: it opens like the draft and reuses
+ * most of its characters ("帮我看下" -> "帮你看下日志"), or starts a capitalised word in the middle
+ * of one ("deplo" -> "Run tests"). Same rule as composer-assist.cjs.
+ */
+export function completionFitsDraft(draft, completion) {
+  const suffix = String(completion ?? '');
+  if (!suffix.trim()) return false;
+  const key = text => String(text ?? '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  const typed = [...key(draft)];
+  const head = [...key(suffix)].slice(0, typed.length);
+  if (typed.length >= 2 && head.length >= 2 && head[0] === typed[0]) {
+    const pool = new Set(typed);
+    if (head.filter(ch => pool.has(ch)).length / head.length >= 0.75) return false;
+  }
+  if (/[A-Za-z]$/.test(String(draft ?? '')) && /^[A-Z]/.test(suffix)) return false;
+  return true;
+}
 
 function normalizePhraseText(value) {
   check(typeof value === 'string', 400, '常用语内容无效');
@@ -329,7 +395,8 @@ export function extractRecentMessages(entries, limit = MAX_CONTEXT_MESSAGES) {
     const role = normalizeRole(entry);
     if (!role) continue;
     const rawText = extractText(entry.text ?? entry.message ?? entry.content ?? entry.prompt);
-    const text = rawText.replace(/\s+/g, ' ').trim();
+    // A quoted reply in front of what the user typed is not the user's own words.
+    const text = (role === 'user' ? rawText.replace(REPLY_CONTEXT_PREFIX_RE, '') : rawText).replace(/\s+/g, ' ').trim();
     if (!text) continue;
     normalized.push({
       id: typeof entry.id === 'string' ? entry.id : '',
@@ -413,7 +480,7 @@ export function compactSuggestionHistory(recentMessages, count = PROMPT_CONTEXT_
  * Generic filler ("继续执行下一步", "总结一下当前进展", ...) is forbidden; an empty array is a valid
  * answer when nothing specific fits (the strip then shows only the user's own phrases).
  */
-export function buildSuggestionMessages(recentMessages, lang, { profileSummary = '', recentUserTexts = [] } = {}) {
+export function buildSuggestionMessages(recentMessages, lang, { profileSummary = '', recentUserTexts = [], quotes = [] } = {}) {
   const isZh = lang === 'zh';
   const systemPrompt = isZh
     ? '你替用户预判他在这个对话里下一句最可能亲自打出来的话，用作输入框上方的快捷建议。' +
@@ -440,8 +507,14 @@ export function buildSuggestionMessages(recentMessages, lang, { profileSummary =
     .map(item => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.text}`)
     .join('\n');
   const recentUser = recentUserTexts.slice(-5).map(text => `- ${clipMiddle(text, 80)}`).join('\n');
+  const quoted = normalizeQuotes(quotes).map(item => `- ${clipMiddle(item.text, 200)}`).join('\n');
   const parts = [];
   if (profileSummary) parts.push(isZh ? `用户习惯：\n${profileSummary}` : `User habits:\n${profileSummary}`);
+  if (quoted) {
+    parts.push(isZh
+      ? `用户正在引用并回复下面的内容（这是被引用的原文，不是用户说过的话；建议要围绕它来写用户接下来对它说的话）：\n${quoted}`
+      : `The user is quoting and replying to the text below (quoted text, not something the user said; base the suggestions on what the user would say about it):\n${quoted}`);
+  }
   if (recentUser) parts.push(isZh ? `用户最近发过（不要重复）：\n${recentUser}` : `User recently sent (do not repeat):\n${recentUser}`);
   parts.push(isZh ? `最近对话：\n${transcript}` : `Recent conversation:\n${transcript}`);
   parts.push(isZh ? '请只返回 JSON 字符串数组（可以是 []）：' : 'Return only the JSON array of strings (may be []):');
@@ -630,6 +703,8 @@ export class SuggestionsService {
     maxCache = DEFAULT_MAX_CACHE,
     replyPrefetchDelayMs = REPLY_PREFETCH_DELAY_MS,
     profileWaitMs = PROFILE_WAIT_MS,
+    busyRetryMs = BUSY_RETRY_MS,
+    maxBusyRetries = MAX_BUSY_RETRIES,
     habits,
     now = () => Date.now(),
   } = {}) {
@@ -656,6 +731,8 @@ export class SuggestionsService {
     // What the user sends to each Bot and how they react to suggestions (suggestion-habits.mjs).
     this.habits = habits ?? new SuggestionHabits({ dataDir, hostCall, now });
     this.profileWaitMs = profileWaitMs;
+    this.busyRetryMs = busyRetryMs;
+    this.maxBusyRetries = maxBusyRetries;
   }
 
   async load() {
@@ -698,6 +775,8 @@ export class SuggestionsService {
   }
 
   #setCached(key, value, agentId) {
+    // The per-Bot disk copy is the answer of the chat itself, not of a pending quote.
+    if (key.includes('|quote=')) agentId = '';
     this.cache.delete(key);
     this.cache.set(key, { ...value, at: this.now() });
     while (this.cache.size > this.maxCache) {
@@ -721,13 +800,14 @@ export class SuggestionsService {
    * Bot is used: messages a client scraped from its screen may still belong to the previous Bot
    * right after a switch. Returns null when that transcript cannot be read.
    */
-  async #loadRecentMessages(agentId, providedMessages) {
+  async #loadRecentMessages(agentId, providedMessages, onEntries) {
     if (agentId && typeof this.hostCall === 'function') {
       try {
         const tail = await this.hostCall('getAgentTranscriptTail', { id: agentId, limit: 12 });
         const entries = Array.isArray(tail?.entries) ? tail.entries
           : Array.isArray(tail?.transcript?.entries) ? tail.transcript.entries
           : Array.isArray(tail) ? tail : [];
+        onEntries?.(entries);
         return extractRecentMessages(entries);
       } catch (error) {
         console.warn(`[suggestions] getAgentTranscriptTail failed for ${agentId}: ${error?.message ?? error}`);
@@ -741,6 +821,22 @@ export class SuggestionsService {
   }
 
   /**
+   * Whether the Bot runs a turn right now (the Host roster's isRunning). A roster that cannot be
+   * read does not block suggestions: the transcript's in-progress entries and the client's own
+   * Stop button / working badge still apply.
+   */
+  async #agentRunning(agentId) {
+    if (!agentId || typeof this.hostCall !== 'function') return false;
+    try {
+      const rows = await this.hostCall('listAgents', {});
+      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.agents) ? rows.agents : [];
+      return list.some(row => row?.id === agentId && row.isRunning === true);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Starts generating in the background (entering a chat, a Bot's new reply) so the next
    * request is answered from the cache. Concurrent prefetches of one Bot share one run.
    */
@@ -749,7 +845,16 @@ export class SuggestionsService {
     const cfg = this.settings?.current?.() ?? { enabled: true, aiEnabled: true };
     if (!cfg.enabled || !cfg.aiEnabled) return false;
     if (this.prefetching.has(agentId)) return true;
-    const task = this.generate({ agentId, locale, foreground: false })
+    // Still working (the reply was followed by a tool call): wait for the end of the turn, then
+    // generate once. Nothing is generated while the turn runs.
+    const run = async () => {
+      for (let attempt = 0; ; attempt++) {
+        const result = await this.generate({ agentId, locale, foreground: false });
+        if (result?.source !== 'busy' || attempt >= this.maxBusyRetries) return result;
+        await new Promise(resolve => { const timer = setTimeout(resolve, this.busyRetryMs); timer.unref?.(); });
+      }
+    };
+    const task = run()
       .catch(error => console.warn(`[suggestions] prefetch failed for ${agentId}: ${error?.message ?? error}`))
       .finally(() => { if (this.prefetching.get(agentId) === task) this.prefetching.delete(agentId); });
     this.prefetching.set(agentId, task);
@@ -786,7 +891,8 @@ export class SuggestionsService {
     }
   }
 
-  async generate({ agentId = '', lastEntryId = '', locale = '', recentMessages, force = false, foreground = true } = {}) {
+  async generate({ agentId = '', lastEntryId = '', locale = '', recentMessages, quotes: rawQuotes, force = false, foreground = true } = {}) {
+    const quotes = normalizeQuotes(rawQuotes);
     const cfg = this.settings?.current?.() ?? { enabled: true, aiEnabled: true, quickPhrases: [] };
     const initialLang = detectSuggestionLanguage(locale, []);
     const learning = cfg.learningEnabled !== false;
@@ -841,7 +947,17 @@ export class SuggestionsService {
       return payload({ aiEnabled: false, aiSuggestions: [], source: 'phrases-only', lang: initialLang });
     }
 
-    const history = await this.#loadRecentMessages(agentId, recentMessages);
+    // Only an idle Bot gets suggestions: a running turn (a streamed reply, a tool call after the
+    // reply on screen) gets nothing — not generated, not cached, not counted as shown.
+    let inProgress = false;
+    const [history, running] = await Promise.all([
+      this.#loadRecentMessages(agentId, recentMessages, entries => { inProgress = entries.some(entryInProgress); }),
+      this.#agentRunning(agentId),
+    ]);
+    if (running || inProgress) {
+      return buildPayload({ enabled: true, aiEnabled: true, quickPhrases: cfg.quickPhrases, aiSuggestions: [], source: 'busy',
+        cached: false, lang: initialLang, agentId, learningEnabled: learning, localCompletionEnabled: localCompletion });
+    }
     profile = await profileTask;
     if (history === null) return payload({ aiSuggestions: [], source: 'model-error', lang: initialLang });
     const lang = detectSuggestionLanguage(locale, history);
@@ -857,7 +973,9 @@ export class SuggestionsService {
     // lastEntryId only matters when there is no Bot ID to read it from.
     const historyId = historySignature(history, agentId ? '' : lastEntryId);
     const habitsTag = learning && profile?.total ? `h${profile.total}` : 'h0';
-    const cacheKey = `${agentId || '_'}:${historyId}:${lang}:${route.profileId}:${route.model}:${route.effort}:${habitsTag}`;
+    // Adding or removing a quote is another state of the conversation: another answer.
+    const quoteTag = quotes.length ? `|quote=${createHash('sha256').update(JSON.stringify(quotes)).digest('hex').slice(0, 12)}` : '';
+    const cacheKey = `${agentId || '_'}:${historyId}:${lang}:${route.profileId}:${route.model}:${route.effort}:${habitsTag}${quoteTag}`;
     if (!force) {
       const hit = this.#getCached(cacheKey, agentId);
       if (hit) return payload({ source: hit.source, cached: true, lang, historyId }, { modelItems: hit.aiSuggestions });
@@ -871,6 +989,7 @@ export class SuggestionsService {
     const context = {
       profileSummary: learning ? profilePromptSummary(profile, lang) : '',
       recentUserTexts,
+      quotes,
     };
     const task = this.#generateFromModel(route, history, lang, cacheKey, agentId, context);
     this.inFlight.set(cacheKey, task);
@@ -1032,6 +1151,7 @@ export class SuggestionsService {
     });
     if (cfg.completionEnabled === false) return result('', 'disabled');
     if (countChars(draft.trim()) < COMPLETION_MIN_CHARS) return result('', 'too-short');
+    if (!completionDraftAllowed(draft)) return result('', 'not-applicable');
 
     const history = await this.#loadRecentMessages(agentId, recentMessages);
     if (history === null) return result('', 'model-error');
@@ -1059,7 +1179,8 @@ export class SuggestionsService {
           signal,
           agentId,
         });
-        const completion = voiceSafeCompletion(draft, parseCompletionResponse(output, draft));
+        const parsed = voiceSafeCompletion(draft, parseCompletionResponse(output, draft));
+        const completion = parsed && completionFitsDraft(draft, parsed) ? parsed : '';
         this.#setCompletionCached(cacheKey, completion);
         return completion;
       })();

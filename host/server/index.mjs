@@ -1250,6 +1250,8 @@ export async function createSelfHostServer(options = {}) {
         lastEntryId,
         locale,
         recentMessages,
+        // The composer's reply quotes (what the next message replies to): context only.
+        quotes: Array.isArray(body?.quotes) ? body.quotes.slice(0, 3) : undefined,
         force: body?.force === true,
       }), requestId });
     }

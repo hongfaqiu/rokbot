@@ -50,6 +50,15 @@
   const COMPLETION_MIN_CHARS = 2;
   const SETTINGS_SYNC_TTL_MS = 15_000;
   const SKELETON_WIDTHS = [86, 118, 72];
+  // A turn is over only after the screen stayed quiet this long with no Stop button / working
+  // badge: between two tool calls of one turn the Stop button can disappear for a moment.
+  const IDLE_SETTLE_MS = 1_200;
+  // Two generations for one Bot are at least this far apart (a quote added and removed at once).
+  const REGENERATE_MIN_INTERVAL_MS = 4_000;
+  // What the user just sent (a tapped suggestion) is not suggested again for a while.
+  const RECENT_SENT_TTL_MS = 10 * 60_000;
+  const MAX_QUOTES = 3;
+  const MAX_QUOTE_CHARS = 500;
 
   // ---- small helpers ------------------------------------------------------------------------
 
@@ -317,7 +326,9 @@
       if (res && typeof res.enabled === 'boolean' && !res.enabled) {
         try { onSettings?.({ completionEnabled: false }); } catch {}
       }
-      const completion = voiceSafeCompletion(input.text, typeof res?.completion === 'string' ? res.completion.replace(/[\r\n]+/g, ' ') : '');
+      const raw = voiceSafeCompletion(input.text, typeof res?.completion === 'string' ? res.completion.replace(/[\r\n]+/g, ' ') : '');
+      // A suffix that does not continue the draft (the model rewrote the sentence) is not shown.
+      const completion = raw && completionFitsDraft(input.text, raw) ? raw : '';
       if (res?.source === 'model') remember(cacheKey(input.context, input.text), completion);
       // The draft moved on while waiting: only show the answer if it still applies.
       if (!latest || latest.context !== input.context || latest.text !== input.text) return;
@@ -331,8 +342,9 @@
       const context = String(input.context ?? '');
       const previous = latest;
       latest = { text, context, payload: input.payload };
+      // input.allowed: completionAllowed() of the composer (selection, /command, code, multi-line, sent).
       const gated = !input.enabled || input.composing || !input.hasHistory || input.caretAtEnd === false
-        || countChars(text.trim()) < minChars;
+        || input.allowed === false || countChars(text.trim()) < minChars;
       if (gated) {
         cancelPending();
         // Keep the prediction across a composition so it can come back if the user keeps typing it.
@@ -416,6 +428,158 @@
         ghost = '';
       },
     };
+  }
+
+  // ---- when the strip is generated (no DOM) ----------------------------------------------------
+  // The strip answers one state of the conversation: the Bot, its last message and the quotes in
+  // the composer. It is generated only once the Bot is really idle (no Stop button, no working
+  // badge, the transcript quiet for settleMs), never while a reply streams or a tool runs.
+
+  /** Pending reply quotes of the composer -> a stable key ('' when there are none). */
+  function quoteKeyOf(quotes) {
+    const list = Array.isArray(quotes) ? quotes : [];
+    return list.map(item => `${item?.id ?? ''}|${String(item?.text ?? '').replace(/\s+/g, ' ').trim()}`)
+      .filter(entry => entry !== '|').join('\u001e');
+  }
+
+  function suggestionStateKey({ agentId = '', signature = '', quoteKey = '', lang = '' } = {}) {
+    return `${agentId}:${signature}:${lang}${quoteKey ? `:q${quoteKey}` : ''}`;
+  }
+
+  /**
+   * observe({ agentId, signature, busy }) after every change of the screen. Returns
+   * { idle, waitMs }: idle is true once the Bot is not working and its transcript has not changed
+   * for settleMs; otherwise waitMs tells when to look again (0 while busy: wait for the next change).
+   * Opening another Bot's chat is not a turn ending: that chat is idle at once unless it is busy.
+   */
+  function createTurnGate({ settleMs = IDLE_SETTLE_MS, now = () => Date.now() } = {}) {
+    let last = null;          // { agentId, signature, busy }
+    let changedAt = -Infinity;
+    return {
+      observe({ agentId = '', signature = '', busy = false } = {}) {
+        const t = now();
+        if (!last || last.agentId !== agentId) changedAt = busy ? t : -Infinity;
+        else if (busy || last.busy !== Boolean(busy) || last.signature !== signature) changedAt = t;
+        last = { agentId, signature, busy: Boolean(busy) };
+        if (busy) return { idle: false, waitMs: 0 };
+        const elapsed = t - changedAt;
+        return elapsed >= settleMs ? { idle: true, waitMs: 0 } : { idle: false, waitMs: Math.max(1, settleMs - elapsed) };
+      },
+      /** The Host answered "busy": the turn is still running whatever the screen shows. */
+      markBusy() { changedAt = now(); if (last) last = { ...last, busy: false }; },
+      get busy() { return Boolean(last?.busy); },
+    };
+  }
+
+  /**
+   * One generation per conversation state, and for one Bot at most one per minIntervalMs.
+   * check(agentId, key) -> { allowed, waitMs }; record(agentId, key) after asking the Host.
+   */
+  function createGenerationLimiter({ minIntervalMs = REGENERATE_MIN_INTERVAL_MS, now = () => Date.now(), maxKeys = MAX_CLIENT_CACHE } = {}) {
+    const done = new Set();
+    const lastAt = new Map();
+    return {
+      check(agentId, key) {
+        if (done.has(key)) return { allowed: false, waitMs: 0 };
+        const previous = lastAt.get(agentId);
+        const wait = previous === undefined ? 0 : minIntervalMs - (now() - previous);
+        return wait > 0 ? { allowed: false, waitMs: wait } : { allowed: true, waitMs: 0 };
+      },
+      record(agentId, key) {
+        done.delete(key);
+        done.add(key);
+        while (done.size > maxKeys) done.delete(done.values().next().value);
+        lastAt.set(agentId, now());
+      },
+      /** A failed / busy answer may be asked again for the same state. */
+      forget(key) { done.delete(key); },
+      clear() { done.clear(); lastAt.clear(); },
+    };
+  }
+
+  /** Texts the user sent a moment ago: never suggested again within ttlMs. */
+  function createRecentSent({ ttlMs = RECENT_SENT_TTL_MS, now = () => Date.now(), max = 40 } = {}) {
+    const items = new Map();
+    const prune = () => {
+      const t = now();
+      for (const [key, at] of items) if (t - at >= ttlMs) items.delete(key);
+      while (items.size > max) items.delete(items.keys().next().value);
+    };
+    return {
+      add(text) { const key = normalizeMatchKey(text); if (!key) return; items.delete(key); items.set(key, now()); prune(); },
+      has(text) { prune(); return items.has(normalizeMatchKey(text)); },
+      filter(list) { prune(); return (Array.isArray(list) ? list : []).filter(text => !items.has(normalizeMatchKey(text))); },
+    };
+  }
+
+  // ---- when a completion may show (no DOM) -------------------------------------------------------
+
+  /** Inside a ``` fence that is not closed yet, or an open `inline code` span. */
+  function inCodeBlock(text) {
+    const value = String(text ?? '');
+    const fences = value.match(/(^|\n)\s*(```|~~~)/g)?.length ?? 0;
+    if (fences % 2 === 1) return true;
+    const outsideFences = value.replace(/(```|~~~)[\s\S]*?(```|~~~)/g, '');
+    const ticks = outsideFences.match(/`/g)?.length ?? 0;
+    return ticks % 2 === 1;
+  }
+
+  /**
+   * Whether inline completion (ghost text and the local match chips) may be offered for `text`.
+   * Only at the end of a one-line draft with a collapsed caret, outside an IME composition, not a
+   * /command, not inside code, and not a message the user already sent (recalled into the composer).
+   * Returns { ok, reason }.
+   */
+  function completionAllowed({ text = '', caretAtEnd: atEnd = true, selectionCollapsed = true, composing = false,
+    codeContext = false, sentTexts = [] } = {}) {
+    const draft = String(text ?? '');
+    if (composing) return { ok: false, reason: 'composing' };
+    if (!selectionCollapsed) return { ok: false, reason: 'selection' };
+    if (atEnd === false) return { ok: false, reason: 'caret' };
+    if (/\n/.test(draft.replace(/\n+$/, ''))) return { ok: false, reason: 'multiline' };
+    if (/^\s*\//.test(draft)) return { ok: false, reason: 'slash' };
+    if (codeContext || inCodeBlock(draft)) return { ok: false, reason: 'code' };
+    const key = normalizeMatchKey(draft);
+    if (key && (Array.isArray(sentTexts) ? sentTexts : []).some(sent => normalizeMatchKey(sent) === key)) {
+      return { ok: false, reason: 'sent' };
+    }
+    return { ok: true, reason: '' };
+  }
+
+  const startsWithUpper = text => /^[A-Z]/.test(text);
+
+  /**
+   * Whether a predicted suffix fits what was typed. A model that rewrites the sentence instead of
+   * continuing it repeats the draft's opening ("帮我看下" + "帮你看下日志") or starts a new word in
+   * the middle of one ("deplo" + "Run tests"): such a suffix is not shown.
+   */
+  function completionFitsDraft(draft, completion) {
+    const typed = String(draft ?? '').replace(/\u200b/g, '');
+    const suffix = String(completion ?? '');
+    if (!suffix.trim() || /[\r\n]/.test(suffix)) return false;
+    if (restatesDraft(typed, suffix)) return false;
+    if (/[A-Za-z]$/.test(typed) && startsWithUpper(suffix)) return false;
+    return true;
+  }
+
+  /**
+   * The suffix opens like the draft and reuses most of its characters: a rewrite of the sentence
+   * ("帮我看下" -> "帮你看下日志"), not its continuation. Same rule as the Host's completionFitsDraft.
+   */
+  function restatesDraft(draft, suffix) {
+    const typed = [...normalizeMatchKey(draft).replace(/\s/g, '')];
+    if (typed.length < 2) return false;
+    const head = [...normalizeMatchKey(suffix).replace(/\s/g, '')].slice(0, typed.length);
+    if (head.length < 2 || head[0] !== typed[0]) return false;
+    const pool = new Set(typed);
+    return head.filter(ch => pool.has(ch)).length / head.length >= 0.75;
+  }
+
+  /** Local match chips: the phrase has to start with (or contain) the draft, not just share its letters. */
+  function matchFitsDraft(draft, text) {
+    const q = normalizeMatchKey(draft);
+    const key = normalizeMatchKey(text);
+    return Boolean(q) && key !== q && key.includes(q);
   }
 
   // ---- composer DOM helpers ------------------------------------------------------------------
@@ -574,6 +738,73 @@
     return true;
   }
 
+  // The official composer shows a pending reply as .sand-prompt-reply-pill (a .sand-reply-quote
+  // with the quoted text in .sand-reply-quote__body); a sent message that replied shows the same
+  // .sand-reply-quote above its text.
+  const QUOTE_PILL_SELECTOR = '.sand-prompt-reply-pill, .sand-reply-quote-pill';
+  const QUOTE_IN_MESSAGE_SELECTOR = '.sand-reply-quote, .sand-reply-quote-pill, .sand-prompt-reply-pill';
+
+  /** The quotes waiting in the composer: [{ id, text }] (what the next message replies to). */
+  function readComposerQuotes(doc, form = doc?.querySelector?.('.sand-prompt-form')) {
+    const scope = form?.parentElement ?? form ?? null;
+    if (!scope || typeof scope.querySelectorAll !== 'function') return [];
+    const out = [];
+    const seen = new Set();
+    for (const pill of scope.querySelectorAll(QUOTE_PILL_SELECTOR)) {
+      if (pill.closest?.('.rokbot-suggestions')) continue;
+      const body = pill.querySelector?.('.sand-reply-quote__body') ?? pill;
+      const text = String(body.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUOTE_CHARS);
+      const id = String(pill.getAttribute?.('data-reply-to-id') || pill.getAttribute?.('data-entry-id') || '').slice(0, 128);
+      const key = `${id}|${text}`;
+      if (!text || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ ...(id ? { id } : {}), text });
+      if (out.length >= MAX_QUOTES) break;
+    }
+    return out;
+  }
+
+  /** Text of a message without the quote it replied to: a quote is never the user's own words. */
+  function messageTextWithoutQuote(el) {
+    if (!el) return '';
+    if (typeof el.querySelector === 'function' && el.querySelector(QUOTE_IN_MESSAGE_SELECTOR) && typeof el.cloneNode === 'function') {
+      const copy = el.cloneNode(true);
+      for (const node of copy.querySelectorAll(QUOTE_IN_MESSAGE_SELECTOR)) node.remove();
+      return String(copy.textContent ?? '');
+    }
+    return String(el.textContent ?? '');
+  }
+
+  /** The sidebar row of this Bot shows the working badge (a tool call, a background step). */
+  function agentWorking(doc, agentId) {
+    if (!agentId || !/^[A-Za-z0-9_-]{1,128}$/.test(agentId)) return false;
+    try {
+      return Boolean(doc.querySelector(`.sand-agents-sidebar .sand-agent-item[data-agent-id="${agentId}"] .sand-kit-working-badge`));
+    } catch { return false; }
+  }
+
+  function selectionCollapsed(input, doc) {
+    if (!input) return true;
+    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') return input.selectionStart === input.selectionEnd;
+    try {
+      const sel = doc.getSelection?.();
+      return !sel || sel.rangeCount === 0 || sel.isCollapsed !== false;
+    } catch { return true; }
+  }
+
+  /** The caret is inside a code block / inline code of a rich composer. */
+  function caretInCode(input, doc) {
+    if (!input || input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') return false;
+    try {
+      const sel = doc.getSelection?.();
+      if (!sel || sel.rangeCount === 0) return false;
+      let node = sel.getRangeAt(0).endContainer;
+      if (node && node.nodeType !== 1) node = node.parentElement;
+      const code = node?.closest?.('pre, code, [data-code-block]');
+      return Boolean(code && input.contains(code));
+    } catch { return false; }
+  }
+
   function extractVisibleMessages(doc) {
     const transcript = doc.querySelector('.sand-virtual-transcript');
     if (!transcript) return [];
@@ -583,17 +814,19 @@
       const rawRole = String(el.getAttribute('data-role') || '').toLowerCase();
       const role = rawRole === 'user' ? 'user' : (['assistant', 'agent', 'bot'].includes(rawRole) ? 'assistant' : '');
       if (!role) continue;
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const text = (role === 'user' ? messageTextWithoutQuote(el) : (el.textContent || '')).replace(/\s+/g, ' ').trim();
       if (!text) continue;
       out.push({ id: el.getAttribute('data-entry-id') || el.getAttribute('data-message-id') || '', role, text: text.slice(0, 500) });
     }
     return out;
   }
 
-  function inspectTranscript(doc) {
+  // streaming: a turn of the Bot on screen is running — a reply streams (Stop button in the
+  // composer) or the Bot works without one on screen (the working badge on its sidebar row).
+  function inspectTranscript(doc, agentId = '') {
     const transcript = doc.querySelector('.sand-virtual-transcript');
     const stopBtn = doc.querySelector('.sand-prompt-form button[aria-label*="Stop" i], .sand-prompt-form button[aria-label*="停止"]');
-    const streaming = Boolean(stopBtn);
+    const streaming = Boolean(stopBtn) || agentWorking(doc, agentId);
     if (!transcript) return { hasHistory: false, signature: 'empty', lastEntryId: '', streaming, recentMessages: [] };
     const items = [...transcript.querySelectorAll('[data-entry-id], [data-message-id], .sand-transcript-row, article, [role="article"]')];
     if (items.length === 0) {
@@ -714,6 +947,14 @@
     let settingsUi = null;
     let revealOnNextRender = false;
     let leavingTimer = 0;
+    // Turn state: nothing is generated or refreshed while the Bot works (createTurnGate).
+    const turnGate = createTurnGate();
+    const generations = createGenerationLimiter();
+    const recentSent = createRecentSent();
+    let busyNow = false;
+    let settleTimer = 0;
+    let currentQuotes = [];
+    const busyRetries = new Map();
 
     const loading = createLoadingMachine({
       onChange: ({ phase }) => {
@@ -757,15 +998,35 @@
 
     const computeVisibleItems = () => {
       if (!settingsState.enabled) return [];
-      const frequent = settingsState.learningEnabled ? frequentCache.get(currentKey) ?? [] : [];
-      return mergeSuggestionItems(settingsState.quickPhrases, settingsState.aiEnabled ? activeAiSuggestions : [], frequent);
+      // While the Bot works only the user's own quick phrases show: no AI items of the previous
+      // state, no placeholders, nothing that changes with every streamed row.
+      if (busyNow) return mergeSuggestionItems(settingsState.quickPhrases, [], []);
+      const frequent = settingsState.learningEnabled ? recentSent.filter(frequentCache.get(currentKey) ?? []) : [];
+      return mergeSuggestionItems(settingsState.quickPhrases, settingsState.aiEnabled ? recentSent.filter(activeAiSuggestions) : [], frequent);
     };
 
-    const localMatchItems = draft => {
+    /** completionAllowed() for the composer as it is now. */
+    const completionGate = (input, draft) => {
+      const state = inspectTranscript(doc, currentAgentId(doc, getViewingAgentId));
+      const sentTexts = (state.recentMessages ?? []).filter(item => item.role === 'user').map(item => item.text);
+      const verdict = completionAllowed({
+        text: draft,
+        caretAtEnd: caretAtEnd(input, doc),
+        selectionCollapsed: selectionCollapsed(input, doc),
+        composing,
+        codeContext: caretInCode(input, doc),
+        sentTexts,
+      });
+      if (verdict.ok && recentSent.has(draft)) return { ok: false, reason: 'sent' };
+      return verdict;
+    };
+
+    const localMatchItems = (draft, input) => {
       if (!settingsState.enabled || !settingsState.localCompletionEnabled || completion.ghost) return [];
+      if (!completionGate(input, composerDraft(input) || draft).ok) return [];
       const agentId = currentAgentId(doc, getViewingAgentId);
       const pool = [...settingsState.quickPhrases.map(item => item.text), ...(candidatesByAgent.get(agentId) ?? [])];
-      return matchCompletions(draft, pool, 3).map(text => ({ type: 'match', text }));
+      return matchCompletions(draft, pool, 3).filter(text => matchFitsDraft(draft, text)).map(text => ({ type: 'match', text }));
     };
 
     // Tap / dismiss -> the Host's habit learning (best effort, never blocks the UI).
@@ -830,8 +1091,8 @@
       const draftText = extractComposerText(input);
       const hasDraft = draftText.length > 0;
       const matchMode = hasDraft && focusedNow;
-      const items = matchMode ? localMatchItems(draftText) : computeVisibleItems();
-      const showSkeleton = !matchMode && loading.phase === 'loading' && settingsState.enabled && settingsState.aiEnabled;
+      const items = matchMode ? localMatchItems(draftText, input) : computeVisibleItems();
+      const showSkeleton = !matchMode && !busyNow && loading.phase === 'loading' && settingsState.enabled && settingsState.aiEnabled;
       if (!focusedNow || !settingsState.enabled || (!matchMode && dismissedKey === currentKey)
         || (matchMode && dismissedKey === `match:${draftText}`) || (items.length === 0 && !showSkeleton)) {
         hideBarAnimated(el);
@@ -899,6 +1160,7 @@
         chip.addEventListener('click', () => {
           const liveForm = doc.querySelector('.sand-prompt-form');
           if (item.type !== 'phrase') sendFeedback('tap', item.text, items);
+          recentSent.add(item.text);
           composerFocused = false;
           suppressUntilRefocus = true;
           el.hidden = true;
@@ -939,11 +1201,19 @@
     let requestSeq = 0;
     let foregroundSeq = 0;
     let prefetchTimer = 0;
-    let lastStreaming = false;
+    let recheckTimer = 0;
+    // The Host still saw the turn running: look again later, a bounded number of times per state.
+    const MAX_BUSY_RETRIES = 30;
 
-    function requestAi(agentId, state, key) {
+    const recheckSoon = ms => {
+      clearTimeout(recheckTimer);
+      recheckTimer = setTimeout(() => triggerIfFocused(), Math.max(50, ms));
+    };
+
+    function requestAi(agentId, state, key, quotes = []) {
       const existing = pendingAi.get(key);
       if (existing) return existing;
+      generations.record(agentId, key);
       const requestId = `s${Date.now().toString(36)}-${++requestSeq}`;
       const controller = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = setTimeout(() => controller?.abort(), timeoutMs);
@@ -957,10 +1227,15 @@
             // Without a Bot ID the screen is the only context; with one the Host reads that Bot's
             // own transcript (the screen may still show the previous Bot right after a switch).
             ...(!agentId && state.recentMessages?.length ? { recentMessages: state.recentMessages } : {}),
+            // What the next message replies to: context for the answer, never the user's own words.
+            ...(quotes.length ? { quotes } : {}),
           }, controller?.signal, 'POST');
           // An answer for another Bot (or another request) is never used, not even cached.
           if (res && typeof res.agentId === 'string' && res.agentId !== agentId) return { ok: false, res: null };
           if (res && typeof res.requestId === 'string' && res.requestId && res.requestId !== requestId) return { ok: false, res: null };
+          // The Host found the Bot still working (a tool call after the reply on screen): nothing
+          // was generated; this state is asked again once the turn is really over.
+          if (res?.source === 'busy') return { ok: false, busy: true, items: [], res };
           if (res && typeof res.enabled === 'boolean') {
             settingsState = normalizeSettings({
               ...settingsState,
@@ -1001,25 +1276,58 @@
       return task;
     }
 
-    function prefetchWanted(state, key) {
-      return settingsState.enabled && settingsState.aiEnabled && state.hasHistory && !state.streaming
-        && !aiCache.has(key) && !pendingAi.has(key) && !prefetchFailed.has(key);
+    /** The Host said the Bot is still working: forget the attempt and look again after the turn. */
+    function onHostBusy(key) {
+      generations.forget(key);
+      turnGate.markBusy();
+      // Busy until the recheck: the strip keeps the quick phrases only, and the recheck counts as a
+      // turn ending (it prepares the answer again even while the composer is not focused).
+      busyNow = true;
+      renderBar();
+      const count = (busyRetries.get(key) ?? 0) + 1;
+      busyRetries.delete(key);
+      busyRetries.set(key, count);
+      while (busyRetries.size > MAX_CLIENT_CACHE) busyRetries.delete(busyRetries.keys().next().value);
+      if (count <= MAX_BUSY_RETRIES) recheckSoon(IDLE_SETTLE_MS + REGENERATE_MIN_INTERVAL_MS);
     }
 
+    /** Whether this state may be generated now: { wanted, waitMs } (waitMs: the per-Bot interval). */
+    function generationWanted(agentId, state, key) {
+      if (busyNow || !settingsState.enabled || !settingsState.aiEnabled || !state.hasHistory) return { wanted: false, waitMs: 0 };
+      if (aiCache.has(key) || pendingAi.has(key) || (busyRetries.get(key) ?? 0) > MAX_BUSY_RETRIES) return { wanted: false, waitMs: 0 };
+      const verdict = generations.check(agentId, key);
+      return { wanted: verdict.allowed, waitMs: verdict.waitMs };
+    }
+
+    /** The composer's chat state as it is now. */
+    function snapshot() {
+      const form = doc.querySelector('.sand-prompt-form');
+      const agentId = currentAgentId(doc, getViewingAgentId);
+      const state = inspectTranscript(doc, agentId);
+      const quotes = readComposerQuotes(doc, form);
+      const key = suggestionStateKey({ agentId, signature: state.signature, quoteKey: quoteKeyOf(quotes), lang: zhNow() ? 'zh' : 'en' });
+      return { form, agentId, state, quotes, key };
+    }
+
+    // Prepares the answer of an idle state in the background (the turn ended, a quote changed,
+    // another chat opened) so focusing the composer shows it at once. Never while the Bot works.
     function schedulePrefetch() {
       clearTimeout(prefetchTimer);
       prefetchTimer = setTimeout(() => {
-        const agentId = currentAgentId(doc, getViewingAgentId);
-        const state = inspectTranscript(doc);
-        const key = `${agentId}:${state.signature}:${zhNow() ? 'zh' : 'en'}`;
-        if (key !== currentKey || !settingsSyncedAt || !prefetchWanted(state, key)) return;
-        void requestAi(agentId, state, key).then(result => {
+        if (busyNow || !settingsSyncedAt) return;
+        const { agentId, state, quotes, key } = snapshot();
+        if (key !== currentKey || state.streaming || prefetchFailed.has(key)) return;
+        const want = generationWanted(agentId, state, key);
+        if (!want.wanted) { if (want.waitMs > 0) recheckSoon(want.waitMs); return; }
+        void requestAi(agentId, state, key, quotes).then(result => {
+          if (result.busy) { onHostBusy(key); return; }
           if (!result.ok) {
+            generations.forget(key);
             prefetchFailed.add(key);
             if (prefetchFailed.size > MAX_CLIENT_CACHE) prefetchFailed.delete(prefetchFailed.values().next().value);
           }
           // Prepared while the composer was already focused: show it now.
-          if (result.ok && key === currentKey && composerFocused && loading.phase !== 'loading') {
+          if (result.ok && key === currentKey && !busyNow && composerFocused && loading.phase !== 'loading') {
             activeAiSuggestions = result.items;
             revealOnNextRender = true;
             renderBar();
@@ -1028,22 +1336,23 @@
       }, PREFETCH_DEBOUNCE_MS);
     }
 
-    async function fetchSuggestions(agentId, state, key) {
+    async function fetchSuggestions(agentId, state, key, quotes = []) {
       const cfg = await syncSettings(false);
-      if (!composerFocused || key !== currentKey) return;
+      if (!composerFocused || key !== currentKey || busyNow) return;
       if (!cfg.enabled || !cfg.aiEnabled || !state.hasHistory) { activeAiSuggestions = []; loading.reset(); renderBar(); return; }
       const cached = aiCache.get(key);
       if (cached) { activeAiSuggestions = cached; loading.reset(); renderBar(); return; }
       if (loading.phase === 'loading') return;
       const token = loading.begin();
       const seq = ++foregroundSeq;
-      const result = await requestAi(agentId, state, key);
+      const result = await requestAi(agentId, state, key, quotes);
       if (!loading.isCurrent(token)) return;
       const accepted = acceptSuggestionResponse({
         requestedKey: key, currentKey, requestedAgentId: agentId, currentAgentId: currentAgentId(doc, getViewingAgentId),
         requestSeq: seq, latestSeq: foregroundSeq, response: result.res,
       });
       if (!accepted) { loading.reset(); renderBar(); return; }
+      if (result.busy) { loading.reset(); onHostBusy(key); renderBar(); return; }
       if (result.ok) {
         activeAiSuggestions = result.items;
         loading.succeed(token, result.items);
@@ -1051,6 +1360,7 @@
         // Nothing usable: the placeholders fade away silently; quick phrases stay.
         activeAiSuggestions = [];
         failedKey = key;
+        generations.forget(key);
         loading.fail(token);
       }
     }
@@ -1060,44 +1370,60 @@
       if (!form) { if (bar) bar.hidden = true; hideGhost(); return; }
       const input = findComposerInput(form);
       attachComposerListeners(form, input);
-      const agentId = currentAgentId(doc, getViewingAgentId);
-      const state = inspectTranscript(doc);
-      const nextKey = `${agentId}:${state.signature}:${zhNow() ? 'zh' : 'en'}`;
-      const replyFinished = lastStreaming && !state.streaming;
-      lastStreaming = state.streaming;
-      if (nextKey !== currentKey) {
-        // Another Bot or a new message: the old answer is gone at once, never shown here.
+      const { agentId, state, quotes, key: nextKey } = snapshot();
+      const turn = turnGate.observe({ agentId, signature: state.signature, busy: state.streaming });
+      const wasBusy = busyNow;
+      busyNow = !turn.idle;
+      clearTimeout(settleTimer);
+      const keyChanged = nextKey !== currentKey;
+      if (keyChanged) {
+        // Another Bot, a new message, a quote added or removed: the old answer is gone at once.
         currentKey = nextKey;
+        currentQuotes = quotes;
         activeAiSuggestions = aiCache.get(nextKey) ?? [];
         failedKey = '';
         loading.reset();
-        schedulePrefetch();
-      } else if (replyFinished) {
-        schedulePrefetch();
       }
+      if (busyNow) {
+        // The Bot is working (streaming, a tool call, the screen not quiet yet): no generation, no
+        // prefetch, no refresh. Look again once the screen has been quiet for the settle time.
+        clearTimeout(debounceTimer);
+        clearTimeout(prefetchTimer);
+        if (loading.phase === 'loading') loading.reset();
+        if (turn.waitMs > 0) settleTimer = setTimeout(triggerIfFocused, turn.waitMs);
+        renderBar();
+        return;
+      }
+      // Idle: the turn ended (generated once more), a quote changed, or another chat opened.
+      if (keyChanged || wasBusy) schedulePrefetch();
       // Prepared in the background (prefetch) since the chat was opened.
       const prepared = aiCache.get(currentKey);
       if (prepared && activeAiSuggestions !== prepared && loading.phase !== 'loading') activeAiSuggestions = prepared;
       const focusedNow = !suppressUntilRefocus && (composerFocused || isInputFocused(input, doc));
+      // One round only while the composer is focused and empty.
       if (!focusedNow || extractComposerText(input).length > 0 || dismissedKey === currentKey) { renderBar(); return; }
       renderBar();
-      if (state.streaming) return;
       clearTimeout(debounceTimer);
       const key = currentKey;
-      const wanted = () => key === currentKey && settingsState.enabled && settingsState.aiEnabled && state.hasHistory
-        && !aiCache.has(key) && failedKey !== key && loading.phase !== 'loading';
+      const keyQuotes = currentQuotes;
+      const wanted = () => {
+        if (key !== currentKey || busyNow || failedKey === key || loading.phase === 'loading') return false;
+        if (pendingAi.has(key)) return true;   // a prefetch is on its way: show the placeholders and join it
+        const want = generationWanted(agentId, state, key);
+        if (!want.wanted && want.waitMs > 0) recheckSoon(want.waitMs);
+        return want.wanted;
+      };
       if (!settingsSyncedAt) {
         void syncSettings(true).then(() => {
           if (!composerFocused) return;
           renderBar();
-          if (wanted()) void fetchSuggestions(agentId, state, key);
+          if (wanted()) void fetchSuggestions(agentId, state, key, keyQuotes);
         });
         return;
       }
       if (!wanted()) return;
-      // A prefetch for this chat is already on its way: show the placeholders and join it.
-      if (pendingAi.has(key)) { void fetchSuggestions(agentId, state, key); return; }
-      debounceTimer = setTimeout(() => { if (composerFocused) void fetchSuggestions(agentId, state, key); }, FOCUS_FETCH_DEBOUNCE_MS);
+      if (pendingAi.has(key)) { void fetchSuggestions(agentId, state, key, keyQuotes); return; }
+      debounceTimer = setTimeout(() => { if (composerFocused) void fetchSuggestions(agentId, state, key, keyQuotes); }, FOCUS_FETCH_DEBOUNCE_MS);
     }
 
     // -- ghost text -------------------------------------------------------------------------------
@@ -1175,12 +1501,15 @@
       const input = findComposerInput(form);
       if (!input) { completion.clear(); hideGhost(); return; }
       const focused = isInputFocused(input, doc);
-      const state = inspectTranscript(doc);
       const agentId = currentAgentId(doc, getViewingAgentId);
+      const state = inspectTranscript(doc, agentId);
+      const draft = composerDraft(input);
       completion.update({
-        text: composerDraft(input),
+        text: draft,
         caretAtEnd: caretAtEnd(input, doc),
         composing,
+        // Caret at the end of a one-line draft, empty selection, no /command, not in code, not a sent message.
+        allowed: completionGate(input, draft).ok,
         enabled: focused && settingsState.completionEnabled && !state.streaming,
         hasHistory: state.hasHistory,
         context: `${agentId}:${state.signature}`,
@@ -1299,6 +1628,8 @@
       clearTimeout(leavingTimer);
       clearTimeout(barLeavingTimer);
       clearTimeout(prefetchTimer);
+      clearTimeout(settleTimer);
+      clearTimeout(recheckTimer);
       observer.disconnect();
       completion.dispose();
       doc.removeEventListener('selectionchange', onSelectionChange);
@@ -1831,6 +2162,19 @@
     prefersReducedMotion,
     createLoadingMachine,
     createCompletionController,
+    IDLE_SETTLE_MS,
+    REGENERATE_MIN_INTERVAL_MS,
+    createTurnGate,
+    createGenerationLimiter,
+    createRecentSent,
+    quoteKeyOf,
+    suggestionStateKey,
+    readComposerQuotes,
+    messageTextWithoutQuote,
+    inCodeBlock,
+    completionAllowed,
+    completionFitsDraft,
+    matchFitsDraft,
     extractComposerText,
     composerDraft,
     insertSuggestionText,
