@@ -1467,7 +1467,7 @@
           <span class="plat-name"><span class="plat-name-ico" aria-hidden="true"><svg class="ico ico-15" aria-hidden="true"><use href="#i-plat-linux"></use></svg></span><span lang="zh">Linux 服务端</span><span lang="en">Linux Server</span></span>
           <span class="plat-form"><span lang="zh">Docker：<code>host</code> (amd64/arm64) + <code>box</code> (amd64)</span><span lang="en">Docker: <code>host</code> (amd64/arm64) + <code>box</code> (amd64)</span></span>
           <span class="plat-base mono">Host 2bb5e41</span>
-          <span class="plat-how"><span lang="zh">源码构建或 GHCR 预构建镜像</span><span lang="en">Build from source or GHCR images</span></span>
+          <span class="plat-how"><span lang="zh">本地源码构建（不提供预构建镜像）</span><span lang="en">Build from source locally (no pre-built images)</span></span>
           <a class="plat-doc" href="https://github.com/hongfaqiu/rokbot/blob/main/host/README.md" rel="noopener"><span lang="zh">文档</span><span lang="en">Docs</span><svg class="ico ico-14" aria-hidden="true"><use href="#i-arrow-right"></use></svg></a>
         </div>
       </div>
@@ -1555,10 +1555,10 @@ bash ../rokbot-src/host/release/install-images.sh --local</code></pre>
         <li class="channel">
           <span class="channel-ico" aria-hidden="true"><svg class="ico ico-18"><use href="#i-plat-docker"></use></svg></span>
           <div>
-            <h3><span lang="zh">服务端：GHCR 预构建镜像或源码构建</span><span lang="en">Server: GHCR images or source build</span></h3>
-            <p><span lang="zh"><code>host</code>（amd64 / arm64）与 <code>box</code>（amd64）镜像，拉取需要仓库访问权限；也可离线导入或从源码构建。</span><span lang="en"><code>host</code> (amd64 / arm64) and <code>box</code> (amd64) images; pulling requires repository access. Offline import and source builds are supported.</span></p>
+            <h3><span lang="zh">服务端：本地源码构建镜像</span><span lang="en">Server: build images locally from source</span></h3>
+            <p><span lang="zh">使用项目构建脚本 <code>host/release/build-docker.py</code> 从源码在本地构建 <code>host</code>（amd64 / arm64）与 <code>box</code>（amd64）镜像；已有镜像也可离线导入。仓库与本站均不提供现成镜像。</span><span lang="en">Build the <code>host</code> (amd64 / arm64) and <code>box</code> (amd64) images locally from source with the project build script <code>host/release/build-docker.py</code>, or import them offline if you already have them. Neither the repository nor this site provides ready-made images.</span></p>
           </div>
-          <span class="channel-tag mono">ghcr.io</span>
+          <span class="channel-tag mono">build-docker</span>
         </li>
         <li class="channel">
           <span class="channel-ico" aria-hidden="true"><svg class="ico ico-18"><use href="#i-rotate-cw"></use></svg></span>
