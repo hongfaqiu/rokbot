@@ -927,6 +927,16 @@ export class BackgroundRecovery {
     void this.deliverFor(agentId);
   }
 
+  /**
+   * True while this bot has background work that will still wake it: a tracked subagent or shell
+   * that is running, or settled and not yet delivered, or a wake being delivered right now.
+   * In-flight turn markers do not count.
+   */
+  hasPendingWork(agentId) {
+    if (this.delivering.has(agentId)) return true;
+    return this.store.list().some((entry) => entry.agentId === agentId && entry.kind !== 'turn');
+  }
+
   pendingFor(agentId) {
     const completions = [];
     const notices = [];

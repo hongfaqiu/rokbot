@@ -206,6 +206,35 @@ export function trailingUndeliveredAssistantText(rawMessages) {
 }
 
 /**
+ * Names of the tools the current turn called (after its last real user/system message), with
+ * CallDynamicTool calls also listed under the dynamic tool they invoked.
+ */
+export function currentTurnToolNames(rawMessages) {
+  if (!Array.isArray(rawMessages) || rawMessages.length === 0) return [];
+  const messages = rawMessages.map(asCoreMessage);
+  let boundary = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (!message || isInjectedReminderMessage(message)) continue;
+    if (message.role === 'user' || message.role === 'system') {
+      boundary = index;
+      break;
+    }
+  }
+  const names = [];
+  for (const message of messages.slice(boundary + 1)) {
+    if (!message || message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part?.type !== 'tool-call' || typeof part.toolName !== 'string') continue;
+      names.push(part.toolName);
+      const input = part.input ?? part.args;
+      if (part.toolName === 'CallDynamicTool' && typeof input?.toolName === 'string') names.push(input.toolName);
+    }
+  }
+  return names;
+}
+
+/**
  * True when the latest tool-result batch waiting on the model includes substantive
  * non-delivery tool output (or a failed delivery tool), ignoring any trailing injected
  * reminder messages.
@@ -364,16 +393,22 @@ export function wrapCreateTurnSettle(originalCreateTurnSettle) {
     let hiddenNudgeEndedOnSilentTools = false;
     let undeliveredWorkAfterSend = false;
     let trailingAssistantText = '';
+    let turnToolNames;
+    let workAfterLastSend = false;
     return {
       ...inner,
       async settleCompletedTurn(args) {
         await inner.settleCompletedTurn(args);
-        if (!host?.isSubagentRunner && args?.hidden !== true) {
-          // Issue #14: a progress SendToUser followed by tool work and a plain-text
-          // conclusion leaves the user looking at the stale progress line.
+        if (!host?.isSubagentRunner) {
           const messages = host.latestPromptMessages?.() ?? [];
-          undeliveredWorkAfterSend = detectSilentToolCallEnding(messages, { requirePriorDelivery: true });
+          // Issue #14: a progress SendToUser followed by tool work and a plain-text
+          // conclusion leaves the user looking at the stale progress line. Hidden turns report
+          // it too: a background-completion wake must not swallow its final answer.
           trailingAssistantText = trailingUndeliveredAssistantText(messages);
+          turnToolNames = currentTurnToolNames(messages);
+          workAfterLastSend = detectSilentToolCallEnding(messages, { requirePriorDelivery: true });
+          // The closing-send flag drives user-turn nudges only; hidden turns just report the fact.
+          if (args?.hidden !== true) undeliveredWorkAfterSend = workAfterLastSend;
         }
         if (!host?.isSubagentRunner && args?.hidden === true) {
           if (isClosingSendNudgePrompt(args.trimmedPrompt)) {
@@ -400,6 +435,12 @@ export function wrapCreateTurnSettle(originalCreateTurnSettle) {
           }
           if (trailingAssistantText && result.trailingAssistantText === undefined) {
             result = { ...result, trailingAssistantText };
+          }
+          if (turnToolNames && result.turnToolNames === undefined) {
+            result = { ...result, turnToolNames };
+          }
+          if (workAfterLastSend && result.workAfterLastSend === undefined) {
+            result = { ...result, workAfterLastSend: true };
           }
         }
         return result;

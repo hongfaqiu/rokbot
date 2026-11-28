@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { withLocalLibraryRunner } from './host-library-files.mjs';
 import { captureGroupSend, installLocalGroupTurns, isLocalGroupRoom } from './local-group-turns.mjs';
 import { BackgroundRecovery, pendingWakeFilePath, resolveBackgroundRecoveryConfig } from './background-recovery.mjs';
+import {
+  promisesLaterReport,
+  schedulesFutureWork,
+  UNBACKED_PROMISE_NUDGE_PROMPT,
+  WAKE_PLAIN_TEXT_NUDGE_PROMPT,
+} from './follow-up-promise.mjs';
 import { AUTO_REVIEW_AWAITING_TAB_ID, autoReviewModesFor, rokbotCardText } from './host-auto-review.mjs';
 import {
   applyLocalBotResourceRemoval,
@@ -496,6 +502,71 @@ function persistTranscriptEntry(tm, session, entry) {
     tm.roster?.emit?.({ type: 'appended', entry }, agentId);
   }
   void tm.roster?.emitAgentUpdate?.(agentId);
+}
+
+function settledNormally(result) {
+  return Boolean(result) && !result.aborted && result.pausedForUpgrade !== true && result.awaitingUserSelection !== true;
+}
+
+/** Post `text` as the bot's reply unless a send-message of this turn already carries it. */
+function postUndeliveredText(tm, session, text, entryIdsBeforeRun, { nextEntryId, createSendMessageEntry }) {
+  if (!text) return false;
+  const entries = readSessionTranscriptEntries(tm, session);
+  if (alreadySentThisTurn(entries, entryIdsBeforeRun, text)) return false;
+  const sendId = nextEntryId(entries, 'send-message', readSessionStoredIds(session));
+  persistTranscriptEntry(tm, session, createSendMessageEntry(sendId, { type: 'text', content: text }, Date.now()));
+  return true;
+}
+
+/** Text of the last send-message this turn added (entries not in `entryIdsBeforeRun`). */
+function lastSentTextSince(entries, entryIdsBeforeRun) {
+  for (let index = (entries?.length ?? 0) - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry?.kind !== 'send-message' || entryIdsBeforeRun?.has(entry.id)) continue;
+    const text = sendMessageEntryText(entry);
+    if (text.trim()) return text;
+  }
+  return '';
+}
+
+/**
+ * The wake ended on plain text nobody saw: either it delivered nothing at all, or it worked with
+ * tools after its last SendToUser and wrote the conclusion as text. A short remark after a send
+ * with no work in between ("Done.") is chatter, not an undelivered answer.
+ */
+function wakeEndedOnUndeliveredAnswer(result) {
+  if (!settledNormally(result) || !undeliveredFinalText(result)) return false;
+  return (result.sentMessageCount ?? 0) === 0 || result.workAfterLastSend === true;
+}
+
+function followUpChecksEnabled() {
+  return (process.env.ROKBOT_FOLLOW_UP_CHECK ?? '1') !== '0';
+}
+
+/**
+ * The user turn ended on a message that promises a later report ("I'll get back to you"), but
+ * nothing will wake the bot: no background subagent or shell is running or waiting to be
+ * delivered, and the turn scheduled no routine. Nudge it once, hidden, in the same run, so it
+ * finishes now or says plainly that nothing is pending. Plain text it answers with is posted,
+ * as for any user turn.
+ */
+async function followUpUnbackedPromise(tm, session, runner, result, entryIdsBeforeRun, entries) {
+  if (!followUpChecksEnabled() || !settledNormally(result)) return undefined;
+  const promised = lastSentTextSince(readSessionTranscriptEntries(tm, session), entryIdsBeforeRun);
+  if (!promisesLaterReport(promised)) return undefined;
+  if (schedulesFutureWork(result.turnToolNames)) return undefined;
+  if (runnerHasBackgroundWork(runner)) return undefined;
+  const recovery = tm.rokbotBackgroundRecovery;
+  if (!recovery || typeof recovery.hasPendingWork !== 'function' || recovery.hasPendingWork(session.id)) return undefined;
+  (recovery.log ?? console.log)(`[rokbot:follow-up] ${session.id} promised a later report with nothing pending; nudging it once`);
+  const before = new Set(readSessionTranscriptEntries(tm, session).map((e) => e?.id));
+  const nudged = await runner.run(UNBACKED_PROMISE_NUDGE_PROMPT, {
+    hidden: true,
+    agentId: session.id,
+    requestSource: 'follow-up-check',
+  }, { kind: 'all' });
+  if (settledNormally(nudged)) postUndeliveredText(tm, session, undeliveredFinalText(nudged), before, entries);
+  return nudged;
 }
 
 async function withBackgroundSessionLease(sessions, agentId, fn) {
@@ -1063,21 +1134,32 @@ export async function runLocalGroupMemberOnRunner(tm, runtimeCtx, memberId, prom
  * Run one hidden wake turn for a bot, serialized with its other runs (the d0a4baa
  * subagent-revival path). Resolves 'delivered', 'superseded', 'paused' or 'cancelled'.
  */
-export async function runBackgroundWake(tm, runtimeCtx, agentId, prompt, { source = 'background-revival' } = {}) {
+export async function runBackgroundWake(tm, runtimeCtx, agentId, prompt, { source = 'background-revival', entries } = {}) {
   return await withBackgroundSessionLease(tm.sessions, agentId, async (session) => {
     const runner = tm.ensureRunnerRegistry(runtimeCtx).getRunner(session);
     let outcome = 'cancelled';
     const task = async () => {
       tm.runLifecycle?.beginSessionRun?.(session);
       try {
-        const result = await runner.run(prompt, {
-          hidden: true,
-          isSilenceAllowed: true,
-          autoReviewEpoch: 'continue',
-        }, { kind: 'all' });
+        const wakeOptions = { hidden: true, isSilenceAllowed: true, autoReviewEpoch: 'continue' };
+        const result = await runner.run(prompt, wakeOptions, { kind: 'all' });
         if (result?.aborted) outcome = 'superseded';
         else if (result?.pausedForUpgrade === true) outcome = 'paused';
         else outcome = 'delivered';
+        // The wake is silence-allowed, so plain text it ends on is never shown. That text is often
+        // the very result the bot promised the user; ask once whether it is meant for them.
+        // A failed nudge must not turn a delivered wake into a retried (duplicate) one.
+        if (outcome === 'delivered' && entries && followUpChecksEnabled() && wakeEndedOnUndeliveredAnswer(result)) {
+          const log = tm.rokbotBackgroundRecovery?.log ?? console.log;
+          log(`[rokbot:follow-up] ${agentId} answered a background wake with plain text; asking it to deliver or stay quiet`);
+          try {
+            const before = new Set(readSessionTranscriptEntries(tm, session).map((e) => e?.id));
+            const nudged = await runner.run(WAKE_PLAIN_TEXT_NUDGE_PROMPT, wakeOptions, { kind: 'all' });
+            if (settledNormally(nudged)) postUndeliveredText(tm, session, undeliveredFinalText(nudged), before, entries);
+          } catch (error) {
+            log(`[rokbot:follow-up] wake delivery check for ${agentId} failed: ${error?.message ?? error}`, 'error');
+          }
+        }
       } finally {
         tm.runLifecycle?.endSessionRun?.(session);
         await tm.roster?.emitAgentUpdate?.(agentId);
@@ -1237,11 +1319,16 @@ export function installBackgroundRecovery(tm, { library, extensions, sandRoot, e
   const gatedByResumeOwnership = Array.isArray(library?.hostExtensionRegistry)
     && library.hostExtensionRegistry.some((extension) => extension?.id === 'resume-ownership');
   const hostLog = log ?? ((line, level) => (level === 'error' ? console.error(line) : console.log(line)));
+  const hostFlowBindings = library?.getHostFlowRecoveryBindings?.() ?? {};
+  const wakeEntries = {
+    nextEntryId: hostFlowBindings.nextEntryId ?? fallbackNextEntryId,
+    createSendMessageEntry: hostFlowBindings.createSendMessageEntry ?? fallbackCreateSendMessageEntry,
+  };
   const recovery = new BackgroundRecovery({
     filePath: pendingWakeFilePath(root),
     config: config ?? resolveBackgroundRecoveryConfig(env),
     log: hostLog,
-    deliver: (agentId, prompt, { source }) => runBackgroundWake(tm, runtimeCtx, agentId, prompt, { source }),
+    deliver: (agentId, prompt, { source }) => runBackgroundWake(tm, runtimeCtx, agentId, prompt, { source, entries: wakeEntries }),
     // resume-ownership blocks local work from its start until the startup resume released it;
     // before it has started, the turn-execution default (allowed) says nothing about readiness.
     isReady: () => {
@@ -1732,6 +1819,11 @@ export function installLocalHarnessBridge(library, { extensions, emitGatewayEven
                   const fallbackEntry = createSendMessageEntry(sendId, { type: 'text', content: fallbackText }, Date.now());
                   persistTranscriptEntry(this.tm, session, fallbackEntry);
                 }
+              }
+              if (!options.hidden) {
+                // The user's turn already finished; a failed follow-up check must not fail it.
+                await followUpUnbackedPromise(this.tm, session, runner, result, entryIdsBeforeRun, { nextEntryId, createSendMessageEntry })
+                  .catch((error) => this.tm.hostLog?.(`follow-up check failed: ${error?.message ?? error}`, 'error'));
               }
               if (nonce) {
                 session.db?.writeKv?.('lastTurnSettlement', JSON.stringify({
