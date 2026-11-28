@@ -281,6 +281,8 @@ export function createModelSession({ baseUrl, apiKey, model, onRequestId, apiFor
     summaryThresholdTokens, contextMode, effortsMode, profileId, providerId, effort, efforts };
   const effortsFor = id => policy?.models?.find(entry => entry.id === id)?.efforts;
   let resolvedModelId;
+  // Credential-free record of the candidate that answered the latest call (see current-model.mjs).
+  let servedModel;
   let selectedContext = { contextWindowTokens, summaryThresholdTokens };
   let earlyCompaction;
 
@@ -485,6 +487,11 @@ export function createModelSession({ baseUrl, apiKey, model, onRequestId, apiFor
           // Harness interprets maxTokens as context capacity, not the output token limit.
           const values = usageValues(turn.usage, requestContext.contextWindowTokens);
           const compaction = compactionCapabilities(requestContext);
+          const servedCandidate = reportedCandidate ?? primary;
+          servedModel = { ...publicCandidate(servedCandidate),
+            reportedModel: typeof turn.model === 'string' ? turn.model : undefined,
+            primaryModel: requested.model, primaryProviderName: requested.providerName,
+            fallback: candidateKey(servedCandidate) !== candidateKey(requested), servedAt: Date.now() };
           if (trackModel) {
             resolvedModelId = turn.model;
             earlyCompaction = compaction.earlyCompactionContextTokenThreshold === undefined ? undefined : {
@@ -549,6 +556,7 @@ export function createModelSession({ baseUrl, apiKey, model, onRequestId, apiFor
   return {
     getModelId: () => model,
     getResolvedModelId: () => resolvedModelId,
+    getServedModel: () => servedModel && { ...servedModel },
     getEarlyCompaction: () => earlyCompaction && { ...earlyCompaction },
     getLocalContextPolicy: () => ({ ...selectedContext }),
     getExecutor: state => new Executor(state, true),

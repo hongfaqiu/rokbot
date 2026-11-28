@@ -29,6 +29,7 @@ import {
   wrapInferenceForSelfHosted,
 } from './local-state-tools.mjs';
 import { createLocalCanvasTools } from './local-canvas-tools.mjs';
+import { createCurrentModelTool, createServedModelTracker } from './current-model.mjs';
 
 const patchedLibraries = new WeakSet();
 
@@ -778,6 +779,9 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
   const effortTool = createLocalEffortToolPort({ session });
   // Local canvases replace the official cloud canvas service (WriteCanvas & co.).
   const canvasTools = dataDir ? createLocalCanvasTools({ library, dataDir, agentId }).tools : [];
+  // Read-only CurrentModel: the model (or fallback) that actually served this runner's latest call.
+  const servedModels = createServedModelTracker();
+  const localExtraTools = [...canvasTools, createCurrentModelTool(library, servedModels)];
   const rawSkillStore = session.skills ?? { list: () => [], listAll: () => [] };
   const withReferenceSkill = (items) => {
     const list = Array.isArray(items) ? items : [];
@@ -847,7 +851,7 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
     offeredTools: new Set(lastOfferedTools),
     installedSkillIds: getInstalledSkillIds(),
   });
-  const wrappedInference = wrapInferenceForSelfHosted(inferenceExt?.port, {
+  const wrappedInference = wrapInferenceForSelfHosted(servedModels.wrapInference(inferenceExt?.port), {
     getOfferedTools: () => lastOfferedTools,
     getInstalledSkillIds,
   });
@@ -855,7 +859,7 @@ export function createRunnerForSession(library, tm, session, { extensions, emitG
     library,
     (names) => { lastOfferedTools = names; },
     getSanitizeOpts,
-    () => canvasTools,
+    () => localExtraTools,
   );
 
   const runner = new RunnerClass({
