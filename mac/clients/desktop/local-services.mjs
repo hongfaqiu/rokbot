@@ -85,6 +85,7 @@ export function desktopEdges(preload) {
 
 export async function createLocalServices(profile, window, { command, request, attachment, attachmentHandlers = {}, connection, disconnect, notifications, updater, pickAvatarFile, openExternal, settings = {}, appVersion, persistence = createClientPersistence(profile), emit = () => {} }) {
   const linkPreview = createLinkPreview({ profile });
+  let restartRequest = null;
   const known = {
     getLinkMetadata: args => linkPreview.getMetadata(args),
     resolveAttachmentMedia: attachment,
@@ -95,6 +96,16 @@ export async function createLocalServices(profile, window, { command, request, a
       ...(language ? { language } : {}),
     }, AbortSignal.timeout(120000)),
     ...createDictation({ request, emit: value => emit('dictation-text', value) }),
+    // Reading a reply aloud. The Host answers in the TextToSpeech JSON shape { audio, mimeType };
+    // the renderer wants { audioBase64, mimeType } and plays it as a data: URL.
+    synthesizeSpeech: async ({ text, voiceId } = {}) => {
+      const reply = await request('/local/audio/speech', { text, ...(voiceId ? { voiceId } : {}) },
+        AbortSignal.timeout(60000), 'POST', { Accept: 'application/json' });
+      if (typeof reply?.audio !== 'string' || typeof reply?.mimeType !== 'string') {
+        throw new Error(rokText('Host 没有返回语音。', 'The Host returned no speech audio.'));
+      }
+      return { audioBase64: reply.audio, mimeType: reply.mimeType };
+    },
     openSelfHostedConnection: connection,
     loginCursor: connection,
     logoutCursor: disconnect,
@@ -212,11 +223,14 @@ export async function createLocalServices(profile, window, { command, request, a
     getCursorTrainingSetting: () => "signed-out",
     getCursorBonfireStatus: () => ({ kind: "ineligible" }),
     getLocalPitmanState: () => ({ isRecorderReady: false, session: null }),
-    getPendingRestartToUpdate: () => {
-      const st = updater?.status?.();
-      if (st?.state?.type === 'ready' && st.state.version) {
-        return { version: st.state.version, message: st.state.readyMessage || '已下载，重启即可更新' };
-      }
+    // Upstream meaning (main-app.cjs applicationMenu): a pending *request from the user* to restart,
+    // made from the app menu, not "an update is staged". The renderer answers a non-null value by
+    // calling confirmRestartToUpdate and then quitAndInstallUpdate at once, without a dialog. So
+    // reporting every staged update here made the app install and quit on each start (#27).
+    // The staged update itself is shown through getUpdateStatus (state "ready").
+    getPendingRestartToUpdate: () => restartRequest,
+    confirmRestartToUpdate: ({ version } = {}) => {
+      if (restartRequest?.version === version) restartRequest = null;
       return null;
     },
     getMicrosoftTeamsAccountLinkStatus: () => ({ links: [], teamEnablement: null }),
@@ -262,6 +276,12 @@ export async function createLocalServices(profile, window, { command, request, a
     console.error("[missing local method]", method);
     throw new Error(`Local desktop does not implement ${method}`);
   };
+  // For a "restart to update" menu or tray item: the renderer picks the request up and installs.
+  const requestRestartToUpdate = version => {
+    if (typeof version !== 'string' || !version) return;
+    restartRequest = { version };
+    emit('restart-to-update', restartRequest);
+  };
   // Passive compatibility notices above are not implemented capabilities.
-  return Object.assign(call, { supports });
+  return Object.assign(call, { supports, requestRestartToUpdate });
 }

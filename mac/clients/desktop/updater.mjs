@@ -593,7 +593,14 @@ export function createDesktopUpdater({
       clearPendingPersistence(targetTrack);
       return false;
     }
-    if (compareVersions(saved.version, appVersion) <= 0) {
+    // The installer was started for this update but we are still on an older version: the
+    // install did not take effect. Drop it and start normally rather than offer it again (#27);
+    // the next check downloads it afresh.
+    const installFailed = saved.installAttempt && compareVersions(saved.version, appVersion) > 0;
+    if (installFailed) {
+      console.warn('[updater] update', saved.version, 'was handed to the installer but', appVersion, 'is still running; discarding the staged update');
+    }
+    if (installFailed || compareVersions(saved.version, appVersion) <= 0) {
       // Upgraded or superseded: drop stale pending metadata and staged files.
       if (saved.kind === 'asar' && saved.asarInfo?.asarFile) {
         try { rmSync(saved.asarInfo.asarFile, { force: true }); } catch {}
@@ -652,6 +659,20 @@ export function createDesktopUpdater({
   };
 
   restorePendingForTrack(track);
+
+  // Mark the staged update as handed to the installer before the app quits, so a start that is
+  // still on the old version can tell the install failed. If the hand-over itself throws, the app
+  // keeps running and the update stays staged.
+  const handOver = async install => {
+    const meta = stagedMeta;
+    if (meta) savePendingPersistence(track, { ...meta, installAttempt: { fromVersion: appVersion ?? '', at: Date.now() } });
+    try {
+      await install();
+    } catch (error) {
+      if (meta) savePendingPersistence(track, meta);
+      throw error;
+    }
+  };
 
   async function tryStageAsarDelta({ manifest, rawManifest, verifyKey, feedUrl, updatesDir, activeTrack, isCurrentGen }) {
     if (!resourcesDir || typeof onInstallAsar !== 'function' || !Array.isArray(manifest.asarDeltas) || manifest.asarDeltas.length === 0) {
@@ -1011,7 +1032,7 @@ export function createDesktopUpdater({
           emit({ type: 'idle', lastCheck: { at: Date.now(), result: 'error', failure: { kind: 'installer_signature_invalid' }, errorMessage: 'Staged ASAR checksum mismatch' } });
           throw Object.assign(new Error('Staged ASAR checksum mismatch'), { kind: 'installer_signature_invalid' });
         }
-        await onInstallAsar(stagedAsarInfo);
+        await handOver(() => onInstallAsar(stagedAsarInfo));
       } else {
         const expectedFileSha = stagedMeta?.sha256;
         if (expectedFileSha) {
@@ -1025,7 +1046,7 @@ export function createDesktopUpdater({
             throw Object.assign(new Error('Staged installer checksum mismatch'), { kind: 'installer_signature_invalid' });
           }
         }
-        await onInstallFile(stagedFile, stagedVersion);
+        await handOver(() => onInstallFile(stagedFile, stagedVersion));
       }
       return { status: 'requested' };
     },

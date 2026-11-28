@@ -279,5 +279,6 @@ test('Desktop Windows delayed installer waits for app exit and Linux UI patch is
   assert.match(linuxPatch, /const updateUiPatch = await patchDesktopUpdateSettingsUi\(unpacked\);/);
   const localSvc = await readFile(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../clients/desktop/local-services.mjs'), 'utf8');
   assert.match(localSvc, /getPendingRestartToUpdate:/);
-  assert.match(localSvc, /pendingRestart|已下载，重启即可更新/);
+  // A staged update is reported through getUpdateStatus only; see desktop-restart-to-update.test.mjs (#27).
+  assert.match(localSvc, /confirmRestartToUpdate:/);
 });

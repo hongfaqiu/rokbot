@@ -2,7 +2,9 @@ import { join } from 'node:path';
 
 /** Original app-scoped helper, permission policy, and MCP output are preserved. */
 export async function createNativeComputer({ original, profile, decideLocalUse, enabled = () => true, helperPath }) {
-  const helper = helperPath ?? original.findComputerHelper();
+  let helper = helperPath;
+  // The upstream computer-use helper exists only on macOS; on Windows the lookup throws.
+  if (!helper) try { helper = original.findComputerHelper(); } catch { helper = null; }
   if (!helper) return { tools: [], async call() { return { status: 'failed', error: 'Computer helper unavailable' }; }, close() {} };
   const computer = new original.ComputerUse({
     readGate: enabled, findHelper: async () => ({ kind: 'bundled', app: helper }),
