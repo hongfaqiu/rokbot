@@ -33,9 +33,9 @@
       "source": "dist/local-exec-daemon/main.cjs",
       "newFile": false,
       "recipe": "003.gbp.gz",
-      "sha256": "45fa3120f84233d82430acd556c7322d50ed16b4199924ac53f032efb0612b42",
-      "targetBytes": 3566123,
-      "addedBytes": 17692
+      "sha256": "ca84084fb2ee11ed66a4ba2a0dfcf3d7e8c805bf9ca4375c52acb96be4711582",
+      "targetBytes": 3570924,
+      "addedBytes": 22660
     },
     {
       "path": "dist/node-agent-coordinator/local-browser.cjs",

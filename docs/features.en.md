@@ -7,6 +7,7 @@
 - The Host ships with a Linux desktop container (`box`). Bots use its browser, terminal and files to do their work. Home and workspace directories live on their own data volumes.
 - Clients can open a live VNC view of the Bot's computer and take over with mouse, keyboard or touch.
 - Bots can also work on your own computer through the Host: on a Mac they can run commands and control the GUI, and on Windows they can run local commands. The client connects out to the Host, so the computer does not need any open ports.
+- Reading files, listing folders and copying files to the Bot's computer are not limited to a folder. Only a fixed list of sensitive paths is off limits: SSH/GPG keys, cloud and GitHub CLI credentials, keychains, browser passwords and cookies, credential files such as `auth.json`, `credentials.json`, `secrets.json`, `model.env`, `setup-key` and `android-signing.json`, and RokBot's own data folder, also when reached through a symlink. Writing, deleting and copying files onto your computer still go through approval or auto-review; files copied from the Bot's computer are saved in RokBot's local workspace.
 - You can replace the built-in `box` with a remote Linux execution node, configured on the Execution page of the admin console.
 
 ## Continuity across devices and notifications

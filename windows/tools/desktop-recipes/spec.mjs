@@ -171,18 +171,40 @@ export function targetMeta(target = 'windows') {
 // The local-exec daemon of each official build this repository patches: 1.3.0 (spec targets)
 // and the retained 1.2.3 and 0.71.2 recipes (build-retained-local-exec.mjs). `tail` is the
 // daemon's own start-up, replaced by the extension and the exports the local client uses.
+//
+// The official path resolver (1.3.0 j4, 1.2.3 f4, 0.71.2 X8) refuses every path outside the
+// local-exec workspace ("Path is outside the allowed local-exec root and was refused"). Read,
+// ls and download (CopyToBox) use rokbotLocalReadPath instead: anywhere on the computer except
+// a fixed deny list of credential stores (extensions/local-exec-transfer.js). Upload
+// (CopyFromBox) keeps the original resolver, with a refusal that names the workspace. Shell is
+// not affected: it only resolves a working directory. Every call site runs after
+// isLocalUseBlocked (approval or auto-review).
+const readSide = (resolver, anchors) => anchors.map(anchor => [anchor, anchor.replace(`await ${resolver}(`, 'await rokbotLocalReadPath(')]);
+const refusals = (error, requested, root) => [
+  [`throw new ${error}(\`Path is outside the allowed local-exec root and was refused: \${${requested}}\`)`, `throw new ${error}(rokbotLocalWriteRefusal(${requested},${root}))`],
+  [`throw new ${error}(\`Path resolves through a symlink to outside the allowed local-exec root and was refused: \${${requested}}\`)`, `throw new ${error}(rokbotLocalWriteRefusal(${requested},${root},!0))`],
+];
 export const LOCAL_EXEC_DAEMON = Object.freeze({
   '1.3.0': Object.freeze({
+    reads: readSide('j4', ['let g=await j4({root:r,path:h.path});h.path=g;', '(h.path=await j4({root:r,path:h.path}),await d.execute(p,h))',
+      'async download(e,t){let n=await j4({root:this.root,path:t})']),
+    refusals: refusals('Bx', 't', 'e'),
     tail: ['pZt().catch(r=>{let e=r instanceof Error?r:new Error(String(r));process.stderr.write(`[sand-local-exec-daemon] fatal:',
       'finally(()=>process.exit(1))});'],
     exports: 'module.exports={Provider:rokbotEnhanceLocalExecProvider(Xx),ComputerUse:Zx,findComputerHelper:QUe,decideLocalUse:jK,isLocalUseBlocked:gEe,retireApproval:mEe,parseApproval:Uft};',
   }),
   '1.2.3': Object.freeze({
+    reads: readSide('f4', ['let g=await f4({root:r,path:h.path});h.path=g;', '(h.path=await f4({root:r,path:h.path}),await d.execute(p,h))',
+      'async download(e,t){let n=await f4({root:this.root,path:t})']),
+    refusals: refusals('Mw', 't', 'e'),
     tail: ['$Ht().catch(r=>{let e=r instanceof Error?r:new Error(String(r));process.stderr.write(`[sand-local-exec-daemon] fatal:',
       'finally(()=>process.exit(1))});'],
     exports: 'module.exports={Provider:rokbotEnhanceLocalExecProvider(Xw),ComputerUse:Zw,findComputerHelper:tDe,decideLocalUse:jW,isLocalUseBlocked:p9e,retireApproval:d9e,parseApproval:Rct};',
   }),
   '0.71.2': Object.freeze({
+    reads: readSide('X8', ['let h=await X8({root:t,path:m.path}),g=await ihe(h);', '(await X8({root:t,path:m.path}),await d.execute(p,m))',
+      'async download(e,r){let n=await X8({root:this.root,path:r})']),
+    refusals: refusals('eN', 'r', 'e'),
     tail: ['n7r().catch(t=>{let e=t instanceof Error?t:new Error(String(t));process.stderr.write(`[sand-local-exec-daemon] fatal:',
       'finally(()=>process.exit(1))})'],
     exports: 'module.exports={Provider:rokbotEnhanceLocalExecProvider(oN),ComputerUse:sN,findComputerHelper:p6,decideLocalUse:qQ,isLocalUseBlocked:yTe,retireApproval:_Te,parseApproval:Ybt}',
@@ -195,6 +217,7 @@ export function localExecDaemonEntry(version) {
   return {
     path: 'dist/local-exec-daemon/main.cjs', source: 'dist/local-exec-daemon/main.cjs',
     edits: [
+      ...[...daemon.reads, ...daemon.refusals].map(([anchor, text]) => ({ replace: anchor, text })),
       { removeThrough: daemon.tail, text: `${extension('local-exec-transfer.js')}\n${daemon.exports}` },
     ],
   };

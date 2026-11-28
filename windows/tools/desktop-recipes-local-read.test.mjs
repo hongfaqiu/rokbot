@@ -75,9 +75,12 @@ for (const [version, dirs] of Object.entries(RECIPE_DIRS)) {
     assert.ok(names, `${version} has a daemon anchor table`);
     for (const relDir of dirs) {
       const added = addedText(await committedDaemonRecipe(relDir));
-      assert.equal(added.split('rokbotLocalReadPath({root:').length - 1, 3, `${relDir}: three read-side call sites`);
-      assert.ok(added.includes('rokbotLocalWriteRefusal('), `${relDir}: write-side refusal text`);
-      assert.ok(added.includes(readFileSync(EXTENSION, 'utf8')), `${relDir}: carries local-exec-transfer.js verbatim`);
+      // A replacement adds only the bytes it does not share with its anchor.
+      const count = (text, word) => text.split(word).length - 1;
+      const extension = readFileSync(EXTENSION, 'utf8');
+      assert.equal(count(added, 'rokbotLocalReadPath') - count(extension, 'rokbotLocalReadPath'), 3, `${relDir}: three read-side call sites`);
+      assert.equal(count(added, 'rokbotLocalWriteRefusal(') - count(extension, 'rokbotLocalWriteRefusal('), 2, `${relDir}: two write-side refusals`);
+      assert.ok(added.includes(extension), `${relDir}: carries local-exec-transfer.js verbatim`);
       assert.ok(!added.includes(OLD_MESSAGE), `${relDir}: the recipe adds no root wording`);
     }
   });
@@ -150,9 +153,11 @@ test('a symlink that points at a sensitive file is refused; one that points at a
   await symlink(path.join(profile, 'config.json'), path.join(root, 'settings.txt'));
   await symlink(path.join(dir, 'vault'), path.join(dir, 'linked-dir'));
   await symlink(path.join(dir, 'photo.png'), path.join(dir, 'photo-link.png'));
-  for (const p of [path.join(dir, 'harmless.txt'), path.join(root, 'settings.txt'), path.join(dir, 'linked-dir', 'credentials.json')]) {
+  for (const p of [path.join(dir, 'harmless.txt'), path.join(root, 'settings.txt')]) {
     await assert.rejects(rokbotLocalReadPath({ root, path: p }), error => /symlink/.test(error.message) && /sensitive/i.test(error.message) && !error.message.includes(OLD_MESSAGE), p);
   }
+  // Refused by its own name before the symlink is followed.
+  await assert.rejects(rokbotLocalReadPath({ root, path: path.join(dir, 'linked-dir', 'credentials.json') }), /sensitive/i);
   assert.equal(await rokbotLocalReadPath({ root, path: path.join(dir, 'photo-link.png') }), path.join(dir, 'photo-link.png'));
 });
 
@@ -227,11 +232,14 @@ for (const file of daemonSources) {
     // Read and ls outside the workspace.
     const read = await exec({ readArgs: { path: path.join(dir, 'a.txt') } });
     assert.ok(text(read).includes('hello outside'), text(read));
-    const listed = await exec({ lsArgs: { path: path.join(dir, 'Volumes', 'X') } });
-    assert.ok(text(listed).includes('y.png'), text(listed));
+    // ls gets past the path check; listing itself needs the ripgrep binary the app configures at
+    // start-up, which this test does not.
+    const listed = text(await exec({ lsArgs: { path: path.join(dir, 'Volumes', 'X') } }));
+    assert.ok(!listed.includes(OLD_MESSAGE) && (listed.includes('y.png') || listed.includes('Ripgrep path not configured')), listed);
     // Copy-out (download and the chunked read) outside the workspace.
     const download = await file1({ kind: 'download', requestId: 'd1', path: path.join(dir, 'Volumes', 'X', 'y.png') });
-    assert.equal(download.kind, 'file-stream', text(download));
+    // 1.3.0 and 1.2.3 stream the file; 0.71.2 returns its bytes in one frame.
+    assert.ok(['file-stream', 'file'].includes(download.kind), text(download));
     const chunked = await chunk({ kind: 'file-read-chunk', path: path.join(dir, 'Volumes', 'X', 'y.png'), offset: 0, length: 1024 });
     assert.equal(Buffer.from(chunked.bytesBase64, 'base64').toString(), 'png bytes', text(chunked));
     const hashed = await chunk({ kind: 'file-hash', path: path.join(dir, 'a.txt') });

@@ -152,6 +152,7 @@
 - **Remote execution node:** the built-in desktop can be swapped for a remote Linux machine under Execution environment in the admin console.
 - **Work on your own computer:** a Bot can run commands and drive the GUI on a Mac, and run local commands on Windows.
 - **No open ports:** clients connect out to the Host, so your computer never opens a port; sensitive actions go through auto-review and approval cards first.
+- **Reading is not limited to a folder:** a Bot can read files, list folders and copy files to its own computer from anywhere on yours, except SSH/GPG keys, cloud and GitHub CLI credentials, keychains, browser passwords and cookies, credential files and RokBot's own sign-in data (also when reached through a symlink). Writing, deleting and copying files onto your computer still go through approval or auto-review first.
 
 <br clear="right" />
 

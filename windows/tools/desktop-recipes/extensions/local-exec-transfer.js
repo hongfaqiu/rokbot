@@ -1,14 +1,142 @@
 // Bounded-memory chunked local-exec file transfer extension (desktop recipes: 1.3.0, 1.2.3, 0.71.2).
 // Removes the 100 MiB single-file cap for CopyToBox / CopyFromBox while keeping Read's inline cap intact,
 // and verifies SHA-256 before atomically committing received files.
+//
+// Local paths. Read, ls and copy-out (CopyToBox, chunked reads, hashes) resolve anywhere on the
+// computer, except a short fixed deny list of credential stores, checked on the requested path
+// and again after following symlinks. Files copied onto the computer (CopyFromBox, uploads)
+// still land only inside the local-exec workspace. Both kinds pass isLocalUseBlocked (approval
+// or auto-review) before they get here.
+function rokbotLocalPathRules() {
+  return {
+    // Relative to the user's home directory.
+    homeDirs: ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.config/gh', '.config/gcloud',
+      '.password-store', '.rokbot-local', '.local/share/keyrings', 'Library/Keychains', 'Library/Cookies',
+      'AppData/Roaming/Microsoft/Credentials', 'AppData/Local/Microsoft/Credentials',
+      'AppData/Roaming/Microsoft/Protect', 'AppData/Local/Microsoft/Vault'],
+    systemDirs: ['/Library/Keychains'],
+    // Any file with this name, wherever it is (browser password and cookie stores included).
+    fileNames: ['auth.json', 'credentials.json', 'secrets.json', 'model.env', 'setup-key', 'android-signing.json',
+      '.admin-password', '.netrc', '.git-credentials', 'login data', 'login data for account', 'web data',
+      'cookies', 'cookies.sqlite', 'cookies.binarycookies', 'logins.json', 'key3.db', 'key4.db'],
+    filePrefixes: ['setup-key.'],
+  };
+}
+
+// The reason `target` is off limits, or undefined. `roots` are local-exec workspaces: the RokBot
+// profile that holds them (sign-in, approvals) is off limits, the workspaces themselves are not.
+function rokbotSensitiveLocalPath(target, { roots = [], homes, platform = process.platform } = {}) {
+  const path = require('node:path');
+  const api = platform === 'win32' ? path.win32 : path.posix;
+  const fold = platform === 'linux' ? value => value : value => value.toLowerCase();
+  const inside = (base, candidate) => {
+    const rel = api.relative(fold(api.resolve(base)), fold(api.resolve(candidate)));
+    return rel === '' || (!rel.startsWith(`..${api.sep}`) && rel !== '..' && !api.isAbsolute(rel));
+  };
+  const rules = rokbotLocalPathRules();
+  const name = fold(api.basename(target));
+  if (rules.fileNames.includes(name) || rules.filePrefixes.some(prefix => name.startsWith(prefix))) {
+    return `a credentials file named ${api.basename(target)}`;
+  }
+  for (const home of homes ?? [require('node:os').homedir()]) {
+    for (const dir of rules.homeDirs) {
+      if (inside(api.join(home, ...dir.split('/')), target)) return `~/${dir}`;
+    }
+  }
+  if (platform !== 'win32') {
+    for (const dir of rules.systemDirs) if (inside(dir, target)) return dir;
+  }
+  for (const root of roots) {
+    if (!root || api.basename(api.dirname(root)) !== 'local-exec') continue;
+    const profile = api.dirname(api.dirname(root));
+    if (inside(profile, target) && !inside(root, target)) return 'RokBot\'s own data folder';
+  }
+  return undefined;
+}
+
+function rokbotNormalizeLocalPath(root, requested) {
+  const path = require('node:path');
+  if (typeof requested !== 'string' || requested.length === 0) throw new Error('File path is required');
+  let normalized = requested;
+  if (normalized.startsWith('file://')) {
+    try { normalized = require('node:url').fileURLToPath(normalized); } catch {}
+  }
+  normalized = normalized.replace(/^~(?=$|\/|\\)/, require('node:os').homedir());
+  return root && !path.isAbsolute(normalized) ? path.resolve(root, normalized) : path.resolve(normalized);
+}
+
+async function rokbotRealpathNearest(targetPath) {
+  const path = require('node:path');
+  const fsp = require('node:fs/promises');
+  const suffix = [];
+  let current = targetPath;
+  for (;;) {
+    try {
+      const resolved = await fsp.realpath(current);
+      return suffix.length === 0 ? resolved : path.join(resolved, ...suffix.reverse());
+    } catch (err) {
+      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') throw err;
+      const parent = path.dirname(current);
+      if (parent === current) return targetPath;
+      suffix.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+const ROKBOT_SENSITIVE_NOTE = 'RokBot never reads or copies SSH/GPG keys, cloud and GitHub CLI credentials, keychains, '
+  + 'browser password and cookie stores, credential files or RokBot\'s own sign-in data on this computer.';
+
+// Read side: Read, ls, CopyToBox, chunked reads and hashes.
+async function rokbotLocalReadPath({ root, path: requested }) {
+  const resolved = rokbotNormalizeLocalPath(root, requested);
+  const lexical = rokbotSensitiveLocalPath(resolved, { roots: [root] });
+  if (lexical !== undefined) {
+    throw new Error(`Refused: ${requested} is a sensitive path on this computer (${lexical}). ${ROKBOT_SENSITIVE_NOTE}`);
+  }
+  const fsp = require('node:fs/promises');
+  const os = require('node:os');
+  const real = await rokbotRealpathNearest(resolved);
+  const realRoot = root ? await fsp.realpath(root).catch(() => root) : root;
+  const realHome = await fsp.realpath(os.homedir()).catch(() => os.homedir());
+  const linked = rokbotSensitiveLocalPath(real, { roots: [root, realRoot], homes: [os.homedir(), realHome] });
+  if (linked !== undefined) {
+    throw new Error(`Refused: ${requested} resolves through a symlink to ${real}, a sensitive path on this computer (${linked}). ${ROKBOT_SENSITIVE_NOTE}`);
+  }
+  return resolved;
+}
+
+function rokbotLocalWriteRefusal(requested, root, throughSymlink = false) {
+  return throughSymlink
+    ? `Refused to write ${requested}: it resolves through a symlink to outside RokBot's local workspace (${root}). `
+      + 'Files copied onto this computer are saved only inside that folder.'
+    : `Refused to write ${requested}: files copied onto this computer are saved only inside RokBot's local workspace (${root}). `
+      + 'Save it there, then move it with a Shell command, which goes through approval or auto-review.';
+}
+
+// Write side: files copied onto the computer stay inside the workspace.
+async function rokbotLocalWritePath({ root, path: requested }) {
+  const path = require('node:path');
+  const resolved = rokbotNormalizeLocalPath(root, requested);
+  const outside = (base, candidate) => {
+    const rel = path.relative(base, candidate);
+    return rel !== '' && (rel.startsWith('..') || path.isAbsolute(rel));
+  };
+  if (root && outside(root, resolved)) throw new Error(rokbotLocalWriteRefusal(requested, root));
+  if (root) {
+    let realRoot;
+    try { realRoot = await require('node:fs/promises').realpath(root); } catch { return resolved; }
+    if (outside(realRoot, await rokbotRealpathNearest(resolved))) throw new Error(rokbotLocalWriteRefusal(requested, root, true));
+  }
+  return resolved;
+}
+
 function rokbotEnhanceLocalExecProvider(BaseProvider) {
   if (typeof BaseProvider !== 'function' || BaseProvider.__rokbotChunkedTransferWrapped) return BaseProvider;
   const fs = require('node:fs');
   const fsp = require('node:fs/promises');
   const path = require('node:path');
-  const os = require('node:os');
   const crypto = require('node:crypto');
-  const { fileURLToPath } = require('node:url');
 
   const CHUNK_VARIANT = 'rokbot-chunked-v1';
   const MAX_READ_CHUNK_BYTES = 8 * 1024 * 1024;
@@ -33,52 +161,6 @@ function rokbotEnhanceLocalExecProvider(BaseProvider) {
     const parsed = Number(trimmed);
     if (!Number.isFinite(parsed) || parsed <= 0) return Infinity;
     return Math.floor(parsed);
-  }
-
-  function isOutsideRoot(root, candidate) {
-    const rel = path.relative(root, candidate);
-    return rel !== '' && (rel.startsWith('..') || path.isAbsolute(rel));
-  }
-
-  async function realpathNearest(targetPath) {
-    const suffix = [];
-    let current = targetPath;
-    for (;;) {
-      try {
-        const resolved = await fsp.realpath(current);
-        return suffix.length === 0 ? resolved : path.join(resolved, ...suffix.reverse());
-      } catch (err) {
-        if (err?.code !== 'ENOENT') throw err;
-        const parent = path.dirname(current);
-        if (parent === current) return targetPath;
-        suffix.push(path.basename(current));
-        current = parent;
-      }
-    }
-  }
-
-  async function resolveLocalPath(root, requestedPath) {
-    if (typeof requestedPath !== 'string' || requestedPath.length === 0) {
-      throw new Error('File path is required');
-    }
-    let normalized = requestedPath;
-    if (normalized.startsWith('file://')) {
-      try { normalized = fileURLToPath(normalized); } catch {}
-    }
-    normalized = normalized.replace(/^~(?=$|\/|\\)/, os.homedir());
-    const resolved = root && !path.isAbsolute(normalized) ? path.resolve(root, normalized) : path.resolve(normalized);
-    if (root && isOutsideRoot(root, resolved)) {
-      throw new Error(`Path is outside the allowed local-exec root and was refused: ${requestedPath}`);
-    }
-    if (root) {
-      let realRoot;
-      try { realRoot = await fsp.realpath(root); } catch { return resolved; }
-      const realTarget = await realpathNearest(resolved);
-      if (isOutsideRoot(realRoot, realTarget)) {
-        throw new Error(`Path resolves through a symlink to outside the allowed local-exec root and was refused: ${requestedPath}`);
-      }
-    }
-    return resolved;
   }
 
   async function streamFileSha256(filePath) {
@@ -239,7 +321,7 @@ function rokbotEnhanceLocalExecProvider(BaseProvider) {
           if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(requestedLen) || requestedLen < 0) {
             return reply({ error: 'Invalid chunk range' });
           }
-          const resolved = await resolveLocalPath(root, frame.path);
+          const resolved = await rokbotLocalReadPath({ root, path: frame.path });
           const transferId = typeof frame.transferId === 'string' && frame.transferId.length > 0 ? frame.transferId : null;
           const existingDownload = transferId ? this.__rokbotDownloads.get(transferId) : null;
           const authorizedContinuation = Boolean(existingDownload && existingDownload.targetPath === resolved && offset > 0);
@@ -303,7 +385,7 @@ function rokbotEnhanceLocalExecProvider(BaseProvider) {
             attachToResourcePath: frame.path,
           });
           if (blocked !== undefined) return reply({ error: blocked });
-          const resolved = await resolveLocalPath(root, frame.path);
+          const resolved = await rokbotLocalReadPath({ root, path: frame.path });
           const digest = await streamFileSha256(resolved);
           return reply(digest);
         }
@@ -320,7 +402,7 @@ function rokbotEnhanceLocalExecProvider(BaseProvider) {
           if (frame.totalSize !== undefined && Number(frame.totalSize) > limit) {
             return reply({ error: `File exceeds local-exec transfer size limit (${frame.totalSize} > ${limit})` });
           }
-          const resolved = await resolveLocalPath(root, frame.path);
+          const resolved = await rokbotLocalWritePath({ root, path: frame.path });
           await fsp.mkdir(path.dirname(resolved), { recursive: true });
           const partPath = `${resolved}.rokbot-${crypto.randomBytes(8).toString('hex')}.part`;
           const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL;
