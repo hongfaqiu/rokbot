@@ -22,6 +22,7 @@ import { contextCacheFilePath } from './model-context-cache.mjs';
 import { createLocalExecBridge } from './local-exec-bridge.mjs';
 import { decorateHostExtensionsFor2bb5e41 } from './local-harness-bridge.mjs';
 import { startLocalContentSearch } from './content-search.mjs';
+import { installLocalGroups } from './local-groups.mjs';
 
 const unsubscribe = () => () => {};
 export function unavailable(capability) {
@@ -166,6 +167,8 @@ export function createInference(config, library, services, { fetchImpl, sessionF
 
 /** Keep original stateful extensions; substitute account and inference boundaries. */
 export function createExtensionStarter(library, modelConfig) {
+  // Group chats are local Bots; the shipped gateway would send createGroup to the official server.
+  installLocalGroups(library);
   let capabilities, services;
   const apis = new Map();
   const replacements = {
