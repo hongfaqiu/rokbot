@@ -5,6 +5,7 @@ import { createLinkPreview } from './link-preview.mjs';
 import { createClientPersistence } from './client-persistence.mjs';
 import { createDictation } from './dictation.mjs';
 import { fetchSandMachines } from './sand-machines.mjs';
+import { createAvatarImageGenerator } from './avatar-image.mjs';
 export const auth = {
   kind: "logged-in",
   authId: "rokbot-local-workspace",
@@ -111,6 +112,8 @@ export async function createLocalServices(profile, window, { command, request, a
     logoutCursor: disconnect,
     addCursorAccount: connection,
     pickAvatarFile,
+    // Avatar editor > Generate: a data: URL from the Host image model (see avatar-image.mjs).
+    generateAgentAvatarImage: createAvatarImageGenerator({ request }),
     listGrokBotAgentFiles: ({ agentId }) => request(`/local/files?agentId=${encodeURIComponent(agentId)}`, null, AbortSignal.timeout(15000), 'GET'),
     uploadGrokBotAgentFile: ({ agentId, fileName, contentType, bytes }) => request('/local/files',
       { agentId, fileName, contentType, base64: Buffer.from(bytes).toString('base64') }, AbortSignal.timeout(60000)),
