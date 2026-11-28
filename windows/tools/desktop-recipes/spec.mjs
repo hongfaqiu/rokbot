@@ -388,6 +388,16 @@ export function specForTarget(target = 'windows') {
         text: 'function bT(e){return RokUseAvatarStyle()===`official`?(0,Z.jsx)(bT_orig,e):(0,Z.jsx)(RokGrokBotMark,e)}function bT_orig(e){bT_orig.d=3834;' },
       { replace: 'function xT(e){xT.d=3835;',
         text: 'function xT(e){return RokUseAvatarStyle()===`official`?(0,Z.jsx)(xT_orig,e):(0,Z.jsx)(RokGrokBotMarkMirror,e)}function xT_orig(e){xT_orig.d=3835;' },
+      // Static Bot avatars (GO with isStatic, its default): the "+ New group chat"
+      // recipient picker, its footer marks and chips, mentions and other small lists draw
+      // the official still mark as an <img> instead of the GrokBotMark (bT), so the
+      // RokBot style above never reached them. Unless the style is "official", a Bot
+      // without its own picture now takes the paused bT path like the sidebar does; a
+      // custom picture (dataUrl) still renders as that picture. The style hook is
+      // read unconditionally at the top so the hook order never changes.
+      { replace: 'function GO(e){GO.d=133;',
+        text: 'function GO(e){let rokStyledStill=RokUseAvatarStyle()!==`official`;GO.d=133;' },
+      { replace: 'if(A!=null||g&&!v){', text: 'if(A!=null||g&&!v&&!rokStyledStill){' },
       { append: extension('eager-app.js') },
       { append: extension('list-arrangement.js') },
       { append: extension('avatar-style.js') },

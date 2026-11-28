@@ -132,9 +132,9 @@
       "source": "dist/renderer/assets/index.eager-app-DqvMmste.js",
       "newFile": false,
       "recipe": "014.gbp.gz",
-      "sha256": "9578c2c34c83f894f41b0ecf2ed63fe4fcfffb30f2a78cea101c99a09a3918b0",
-      "targetBytes": 5881949,
-      "addedBytes": 139500
+      "sha256": "ffcd99f9053ccdb2768cbdd896a592337f18b9faac4ebe61553a65007e64e610",
+      "targetBytes": 5882018,
+      "addedBytes": 139569
     },
     {
       "path": "dist/renderer/assets/index.eager-common-rGW_2t4Y.js",
