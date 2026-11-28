@@ -5,6 +5,7 @@ import { rokText } from './desktop/i18n.mjs';
 import { externalHttpUrl } from './desktop/external-url.mjs';
 import { createConnectorHandlers } from './desktop/connectors.mjs';
 import { createDictation } from './desktop/dictation.mjs';
+import { createAvatarImageGenerator } from './desktop/avatar-image.mjs';
 import { fetchSandMachines } from './desktop/sand-machines.mjs';
 import { buildZipStore } from './desktop/zip-store.mjs';
 import { boot as androidBoot, native, log, toBase64, fromBase64, toBytes, timeout, combineSignals } from './native.js';
@@ -556,6 +557,8 @@ export function createServices(context) {
     addCursorAccount: () => context.showConnection(),
     logoutCursor: () => context.disconnect(),
     pickAvatarFile: () => pickImageFile(),
+    // Avatar editor > Generate: a data: URL from the Host image model (desktop/avatar-image.mjs).
+    generateAgentAvatarImage: createAvatarImageGenerator({ request }),
     listGrokBotAgentFiles: ({ agentId }) => request(`/local/files?agentId=${encodeURIComponent(agentId)}`, null, timeout(15000), 'GET'),
     uploadGrokBotAgentFile: ({ agentId, fileName, contentType, bytes }) => request('/local/files',
       { agentId, fileName, contentType, base64: toBase64(bytes) }, timeout(60000)),
