@@ -27,6 +27,7 @@
 <p align="center">
   <a href="README.md">简体中文</a> ·
   <strong>English</strong> ·
+  <a href="README.tr.md">Türkçe</a> ·
   <a href="#features">Features</a> ·
   <a href="#new-directions--roadmap">Roadmap</a> ·
   <a href="#quick-start">Quick Start</a> ·
